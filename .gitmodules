@@ -1,0 +1,8 @@
+[submodule "ivsr_gpu_opt/based_on_openvino_2022.1/openvino"]
+	path = ivsr_gpu_opt/based_on_openvino_2022.1/openvino
+	url = https://github.com/openvinotoolkit/openvino.git
+	branch = releases/2022/1
+[submodule "ivsr_gpu_opt/based_on_openvino_2022.3/openvino"]
+	path = ivsr_gpu_opt/based_on_openvino_2022.3/openvino
+	url = https://github.com/openvinotoolkit/openvino.git
+	branch = releases/2022/3
