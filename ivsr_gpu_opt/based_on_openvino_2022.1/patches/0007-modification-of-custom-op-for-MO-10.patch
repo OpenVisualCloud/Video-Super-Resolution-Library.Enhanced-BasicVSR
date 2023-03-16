@@ -1,0 +1,33 @@
+From f398065e7cbc7f23b4bd5332b00eea6fcc4737e9 Mon Sep 17 00:00:00 2001
+From: KunLong9 <105702843+KunLong9@users.noreply.github.com>
+Date: Thu, 22 Sep 2022 10:35:28 +0800
+Subject: [PATCH 07/17] modification of custom op for MO (#10)
+
+---
+ .../front/onnx/flow_warp_custom_op_ext.py                 | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/tools/mo/openvino/tools/mo/custom_op_mo_extension/front/onnx/flow_warp_custom_op_ext.py b/tools/mo/openvino/tools/mo/custom_op_mo_extension/front/onnx/flow_warp_custom_op_ext.py
+index db2d8fefb6..2b43296c7a 100644
+--- a/tools/mo/openvino/tools/mo/custom_op_mo_extension/front/onnx/flow_warp_custom_op_ext.py
++++ b/tools/mo/openvino/tools/mo/custom_op_mo_extension/front/onnx/flow_warp_custom_op_ext.py
+@@ -1,6 +1,6 @@
+-from mo.front.extractor import FrontExtractorOp
+-from mo.ops.op import Op
+-from mo.my_mo_extensions.ops.flow_warp_custom_op import FlowWarp
++from openvino.tools.mo.front.extractor import FrontExtractorOp
++from openvino.tools.mo.ops.op import Op
++from openvino.tools.mo.custom_op_mo_extension.ops.flow_warp_custom_op import FlowWarp
+ class FlowWarpFrontExtractor(FrontExtractorOp):
+     op = 'flow_warp'
+     enabled = True
+@@ -11,4 +11,4 @@ class FlowWarpFrontExtractor(FrontExtractorOp):
+         attrs = {}
+         FlowWarp.update_node_stat(node,attrs)
+ 
+-        return cls.enabled
+\ No newline at end of file
++        return cls.enabled
+-- 
+2.25.1
+

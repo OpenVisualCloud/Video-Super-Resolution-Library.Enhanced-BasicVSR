@@ -1,0 +1,383 @@
+From bf33e96e07d81b7e9d30b556dd33c064875dcf58 Mon Sep 17 00:00:00 2001
+From: EmonLu <13095871626@163.com>
+Date: Thu, 22 Sep 2022 16:49:39 +0800
+Subject: [PATCH 12/17] add refined cpp sample of BasicVSR (#14)
+
+---
+ samples/cpp/basicvsr/CMakeLists.txt |  25 +++
+ samples/cpp/basicvsr/main.cpp       | 331 ++++++++++++++++++++++++++++
+ 2 files changed, 356 insertions(+)
+ create mode 100755 samples/cpp/basicvsr/CMakeLists.txt
+ create mode 100755 samples/cpp/basicvsr/main.cpp
+
+diff --git a/samples/cpp/basicvsr/CMakeLists.txt b/samples/cpp/basicvsr/CMakeLists.txt
+new file mode 100755
+index 0000000000..2d16a7f4cc
+--- /dev/null
++++ b/samples/cpp/basicvsr/CMakeLists.txt
+@@ -0,0 +1,25 @@
++# Copyright (C) 2018-2022 Intel Corporation
++# SPDX-License-Identifier: Apache-2.0
++#
++
++set (TARGET_NAME "basicvsr_sample")
++
++ie_add_sample(NAME basicvsr_sample
++              SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/main.cpp"
++              DEPENDENCIES format_reader ie_samples_utils)
++
++# Find OpenCV components if exist
++find_package(OpenCV COMPONENTS core imgproc imgcodecs QUIET)
++if(NOT OpenCV_FOUND)
++    message(WARNING "OpenCV is disabled or not found, ${TARGET_NAME} will be built without OpenCV support")
++else()
++    target_link_libraries(${TARGET_NAME} PRIVATE ${OpenCV_LIBRARIES} ie_samples_utils)
++    if(UNIX AND NOT APPLE)
++        # Workaround issue that rpath-link is missing for PRIVATE dependencies
++        # Fixed in cmake 3.16.0 https://gitlab.kitware.com/cmake/cmake/issues/19556
++        target_link_libraries(${TARGET_NAME} INTERFACE "-Wl,-rpath-link,${OpenCV_INSTALL_PATH}/lib")
++    endif()
++    target_compile_definitions(${TARGET_NAME} PRIVATE USE_OPENCV)
++endif()
++
++
+diff --git a/samples/cpp/basicvsr/main.cpp b/samples/cpp/basicvsr/main.cpp
+new file mode 100755
+index 0000000000..b3f10f39b5
+--- /dev/null
++++ b/samples/cpp/basicvsr/main.cpp
+@@ -0,0 +1,331 @@
++// main.cpp included
++#include <algorithm>
++#include <chrono>
++#include <memory>
++#include <string>
++#include <utility>
++#include <vector>
++
++// clang-format off
++#include "openvino/openvino.hpp"
++
++#include "samples/args_helper.hpp"
++#include "samples/common.hpp"
++#include "samples/slog.hpp"
++
++#include "gna/gna_config.hpp"
++#include "gpu/gpu_config.hpp"
++
++#include "opencv2/opencv.hpp"
++#include <opencv2/core/utility.hpp>
++#include <sys/types.h>
++#include <dirent.h>
++
++const char *keys =
++    "{h                 || Print Help Message}"
++    "{model_path        || Need. Path of openvino ir model(.xml)}"
++    "{data_path         || Need. Dataset path }"
++    "{nif               |3| Need. Number of Input Frames}"
++    "{extension         || Optional. Extension (.so or .dll) path }"
++    "{device            |CPU| Optional. CPU or GPU }"
++    "{save_predictions  |true| Optional. Whether to save the results to save_path.}"
++    "{patch_evalution   |false| Optional. Whether to crop the original frames to smaller patches for evalute}"
++    "{save_path         |./outputs| Optional.Path to save predictions}"
++    "{cldnn_config      || Path of CLDNN config. }"
++   ;
++
++
++bool checkPath(std::string path){
++    DIR *pDir;
++    if(!(pDir = opendir(path.c_str())) || path[path.size() - 1] == '/')
++        return false;
++    return true;
++}
++
++// get file names in the directory 
++int getFileNames(std::string path,std::vector<std::string>& filenames)
++{
++    DIR *pDir;
++    struct dirent* ptr;
++    if(!(pDir = opendir(path.c_str())))
++        return -1;
++    while((ptr = readdir(pDir))!=0) {
++        if (strcmp(ptr->d_name, ".") != 0 && strcmp(ptr->d_name, "..") != 0)
++            filenames.push_back(ptr->d_name);
++    }
++    sort(filenames.begin(), filenames.end());
++    closedir(pDir);
++    return 0;
++}
++
++// input:   n images with BGR(RGB) 0-255 
++// output:  NCHW Matrix with RGB(BGR) 0-1
++cv::Mat blobFromImages(std::vector<cv::Mat>& images, double scaleFactor,
++                   bool swapRB)
++{
++    for (int i = 0; i < images.size(); i++) 
++        if(images[i].depth() == CV_8U) 
++            images[i].convertTo(images[i], CV_32F, scaleFactor);
++
++    size_t nimages = images.size();
++    cv::Mat image0 = images[0];
++    int nch = image0.channels();
++    int sz[] = { (int)nimages, nch, image0.rows, image0.cols };
++    cv::Mat blob;
++    blob.create(4, sz, CV_32F);
++    cv::Mat ch[3];
++
++    for(size_t i = 0; i < nimages; i++ )
++    {
++        const cv::Mat& image = images[i];
++        CV_Assert(image.depth() == CV_32F);
++        nch = image.channels();
++        CV_Assert(nch == 3);
++        CV_Assert(image.size() == image0.size());
++
++        for( int j = 0; j < nch; j++ )
++            ch[j] = cv::Mat(image.rows, image.cols, CV_32F, blob.ptr((int)i, j));
++        if(swapRB)
++            std::swap(ch[0], ch[2]);
++        cv::split(image, ch);
++    }
++    
++    return blob;
++}
++
++void imagesFromBlob(const cv::Mat& blob_, std::vector<cv::Mat>& images_)
++{
++    // A blob is a 4 dimensional matrix in floating point precision
++    // blob_[0] = batchSize = nbOfImages
++    // blob_[1] = nbOfChannels
++    // blob_[2] = height
++    // blob_[3] = width
++    // output : BGR HWC3 image lists
++    CV_Assert(blob_.depth() == CV_8U);
++    CV_Assert(blob_.dims == 4);
++    CV_Assert(blob_.size[1] == 3);
++
++    int sz[] = {blob_.size[2], blob_.size[3]};
++    cv::Mat vectorOfChannels[3];
++    for (int n = 0; n < blob_.size[0]; ++n)
++    {
++        for (int c = 0; c < 3; ++c)
++        {
++            cv::Mat curChannel(2, sz, CV_8U, (void *)blob_.ptr<uchar>(n, c));
++            vectorOfChannels[2 - c] = curChannel;   // BGR
++        }
++        cv::Mat curImage;
++        cv::merge(vectorOfChannels, 3, curImage);
++        images_.push_back(curImage);
++    }
++}
++
++
++std::vector<std::vector<int>> calculatePatchCoordinateList(int oriH, int oriW, int cropSize[], int blockSize[]){
++    int cropHeight = cropSize[0];
++    int cropWidth = cropSize[1];
++    int interHeight = (cropHeight * blockSize[0] - oriH) / (blockSize[0] - 1);
++    int lastFillHeight = (cropHeight * blockSize[0] - oriH) % (blockSize[0] - 1);
++    int interWidth = (cropWidth * blockSize[1] - oriW) / (blockSize[1] - 1);
++    int lastFillWidth = (cropWidth * blockSize[1] - oriW) % (blockSize[1] - 1);
++    std::vector<std::vector<int> > cropCoordinateList;
++    for(int i = 0; i < blockSize[0]; i ++){
++        for(int j = 0; j < blockSize[1]; j ++){
++            int x1 = (cropHeight - interHeight) * i;
++            int y1 = (cropWidth - interWidth) * j;
++            if(i == blockSize[0] - 1) x1 -= lastFillHeight;
++            if(j == blockSize[1] - 1) y1 -= lastFillWidth;
++            cropCoordinateList.push_back({x1, y1, x1 + cropHeight, y1 + cropWidth});
++        }
++    }
++    return cropCoordinateList;
++}
++
++// get LR patch list from blob NCHW matrix according to patchCoordinateList
++// nblocks : (1, nif, 3, 360, 640)
++std::vector<cv::Mat> getCroppedPatch(cv::Mat blobMat, std::vector<std::vector<int>> patchCoordinateList, int nif, int cropSize[], int blockSize[]){
++    std::vector<cv::Mat> cropedList;
++    for(int i = 0; i < blockSize[0]; i ++){
++        for(int j = 0; j < blockSize[1]; j ++){
++            int patchIdx = i * blockSize[1] + j;
++            std::vector<int> curPatchCoord = patchCoordinateList[patchIdx]; 
++            std::vector<cv::Range> cropRange = {cv::Range::all(), cv::Range::all(), cv::Range::all(), cv::Range(curPatchCoord[0], curPatchCoord[2]), cv::Range(curPatchCoord[1], curPatchCoord[3])};
++            cv::Mat curPatch(blobMat, cropRange);
++            cv::Mat copiedPatch = curPatch.clone();
++            cropedList.push_back(copiedPatch);
++        }
++    }   
++    return cropedList;
++}
++
++
++int main(int argc, char **argv){
++    // -------- Parsing and validation of input arguments --------
++    cv::CommandLineParser parser(argc, argv, keys);
++    std::string data_path = parser.get<std::string>("data_path");
++    int nif = parser.get<int>("nif");
++    std::string help = parser.get<std::string>("h");
++    std::string model_path = parser.get<std::string>("model_path");
++    std::string extension = parser.get<std::string>("extension");
++    std::string device = parser.get<std::string>("device");
++    bool save_predictions = parser.get<bool>("save_predictions");
++    bool patch_evalution = parser.get<bool>("patch_evalution");
++    std::string save_path = parser.get<std::string>("save_path");
++    std::string cldnn_config = parser.get<std::string>("cldnn_config");
++    if (!parser.check() || help != "")
++    {
++        std::cout << "Error in commandline!" << std::endl;
++        parser.printMessage();
++        parser.printErrors();
++        return -1;
++    }
++
++    // input path check 
++    if(!checkPath(data_path) || !checkPath(save_path)){
++        std::cout << "Invalid directory path!" << std::endl;
++        std::cout << "Directory NOT found or PATH ended with '/' " << std::endl;
++        std::cout << "Please confirm your path is existed and does NOT end with '/' " << std::endl;
++        return -1;
++    }
++
++    // global variables
++    int scaleFactor = 2;
++    int cropSize[] = {360, 640};
++
++    // -------- Step 1. Initialize OpenVINO Runtime Core --------
++    ov::Core core;
++
++    // add extension: flow_warp_op
++    if(extension != "") {
++        if(device == "CPU"){
++	        std::cout << "Running on CPU! " << std::endl;
++	        core.add_extension(extension);
++            slog::info << "libcustom_extension is loaded " << extension << slog::endl;
++        }
++        else if(device == "GPU"){
++            std::cout << "Running on GPU! " << std::endl; 
++	        core.add_extension(extension);
++            core.set_property("GPU", {{CONFIG_KEY(CONFIG_FILE), cldnn_config}});
++            core.set_property("GPU", {{CONFIG_KEY(GPU_THROUGHPUT_STREAMS), 1}});
++            slog::info << "GPU extensions is loaded " << extension << slog::endl;
++            slog::info << "Cldnn_config is set " << cldnn_config << slog::endl;
++        }
++    }
++    slog::info << "OpenVINO: " << ov::get_openvino_version() << slog::endl;
++
++    // -------- Step 2. Read model --------
++    slog::info << "Loading model files: " << model_path << slog::endl;
++    std::shared_ptr<ov::Model> input_model = core.read_model(model_path);
++    printInputAndOutputsInfo(*input_model);
++    auto inputs = (*input_model).inputs();
++    auto input = inputs[0];
++    const ov::Shape modelInputShape = input.get_shape();
++    // check NIF
++    if(nif != modelInputShape[1]){
++    	std::cout << "Invalid NIF value!" << std::endl;
++	    return -1;
++    }
++
++    // --------  Loading a model to the device --------
++    ov::CompiledModel compiled_model = core.compile_model(input_model, device);
++
++    // -------- Step 3. Set up input and initialize output
++    // 3.1 Get file names
++    std::cout << "Getting file names from : " << data_path << std::endl;
++    std::vector<std::string> filePathList;
++    getFileNames(data_path, filePathList);
++    if(filePathList.size() < nif) {
++        std::cout << "Not enough frames for an inference!" << std::endl;
++        std::cout << "At least NIF frames in the data_path are needed!" << std::endl;
++        return -1;
++    }
++
++    // 3.2 Read input images and preprocess with opencv
++    std::vector<cv::Mat> inMatList;
++    for(int i = 0; i < nif; i ++){
++        std::string filePath = data_path + "/" + filePathList[i];
++        std::cout << "Reading image: " << filePath << std::endl;
++        cv::Mat img = cv::imread(filePath, cv::IMREAD_COLOR);
++        inMatList.push_back(img);
++    } 
++    // check images' shape
++    int oriHeight = inMatList[0].rows, oriWidth = inMatList[0].cols;
++    if(oriHeight < modelInputShape[3] || oriWidth < modelInputShape[4]) {
++        std::cout << "Shape of frame does NOT match with the model's input_shape '!" << std::endl;
++        return -1;
++    }
++
++    // refer to cv::dnn::blobFromImages
++    cv::Mat inputNCHW = blobFromImages(inMatList, 1.0/255, true);
++    int sz[] = { 1, nif, 3, oriHeight, oriWidth };
++    cv::Mat blobMat(5, sz, CV_32F, (float *)inputNCHW.data);
++    int outputSize[] = {1, nif, 3, oriHeight * scaleFactor, oriWidth * scaleFactor};
++	cv::Mat outputImg = cv::Mat::zeros(5, outputSize, CV_32F);
++    // -------- Step 4. Inference --------
++    if(!patch_evalution){
++        ov::element::Type input_type = ov::element::f32;
++        ov::Shape input_shape = {1, nif, 3, oriHeight, oriWidth};
++        ov::Tensor input_tensor = ov::Tensor(input_type, input_shape, (float *) blobMat.data);
++        ov::InferRequest infer_request = compiled_model.create_infer_request();
++        infer_request.set_input_tensor(input_tensor);
++        infer_request.infer();
++        const ov::Tensor& output_tensor = infer_request.get_output_tensor();
++        cv::Mat outMat(5, outputSize, CV_32F, (float *)output_tensor.data());
++        outputImg += outMat;
++    }
++    else{   // patch inference
++        // crop patches
++        int blockSize[] = {oriHeight / cropSize[0] + 1, oriWidth / cropSize[1] + 1};
++        std::vector<std::vector<int>> patchCoordinateList = calculatePatchCoordinateList(oriHeight, oriWidth, cropSize, blockSize);
++        std::vector<cv::Mat> cropedList = getCroppedPatch(blobMat, patchCoordinateList, nif, cropSize, blockSize); 
++
++        outputImg = cv::Mat::zeros(5, outputSize, CV_32F);
++        cv::Mat addCount = cv::Mat::zeros(5, outputSize, CV_32F);
++
++        ov::element::Type input_type = ov::element::f32;
++        ov::Shape input_shape = {1, nif, 3, cropSize[0], cropSize[1]};
++        cv::Mat outputPatch;
++        for(int i = 0; i < blockSize[0]; i ++){
++            for(int j = 0; j < blockSize[1]; j ++){
++                int idx = i * blockSize[1] + j;
++                std::vector<int> coordinate = patchCoordinateList[idx]; 
++                ov::Tensor input_tensor = ov::Tensor(input_type, input_shape, (float *) cropedList[idx].data);
++                ov::InferRequest infer_request = compiled_model.create_infer_request();
++                infer_request.set_input_tensor(input_tensor);
++                infer_request.infer();
++                // -------- Process output --------
++                const ov::Tensor& output_tensor = infer_request.get_output_tensor();
++                int outsz[] = { 1, nif, 3, scaleFactor*cropSize[0], scaleFactor*cropSize[1] };
++                outputPatch = cv::Mat(5, outsz, CV_32F, (float *)output_tensor.data());
++
++                std::vector<cv::Range> curRange = {cv::Range::all(), cv::Range::all(), cv::Range::all(), cv::Range(coordinate[0] * scaleFactor, coordinate[2] * scaleFactor), cv::Range(coordinate[1] * scaleFactor, coordinate[3] * scaleFactor)};
++                cv::Mat outputROI(outputImg, curRange);
++                cv::Mat onesMat = cv::Mat::ones(5, outsz, CV_32F);
++                cv::Mat addCountROI(addCount, curRange);
++                outputROI += outputPatch;     
++                addCountROI += onesMat;
++            }
++        }
++        outputImg /= addCount;
++    }
++    // post process
++    outputImg.convertTo(outputImg, CV_8U, 255.0);
++    int nchwSize[] = {nif, 3, oriHeight * scaleFactor, oriWidth * scaleFactor};
++    cv::Mat outputNCHW(4, nchwSize, CV_8U, (void *)outputImg.data);
++    std::vector<cv::Mat> outMatList;
++    imagesFromBlob(outputNCHW, outMatList);
++
++    // save outputs
++    if(save_predictions){
++        if(save_path == ""){
++            std::cout << "save_path is needed!" << std::endl;
++            return -1;
++        }
++        for(int i = 0; i < nif; i ++){
++            std::string filePath = save_path + "/" + filePathList[i];
++            std::cout << "Saving image: " << filePath << std::endl;
++            cv::imwrite(filePath, outMatList[i]);
++        } 
++    }
++
++}
+-- 
+2.25.1
+

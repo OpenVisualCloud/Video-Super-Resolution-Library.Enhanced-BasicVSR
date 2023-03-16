@@ -1,0 +1,506 @@
+From 939368c0d9cae0cf11d18a85bffc292dc7551434 Mon Sep 17 00:00:00 2001
+From: EmonLu <13095871626@163.com>
+Date: Fri, 23 Sep 2022 17:46:49 +0800
+Subject: [PATCH 14/17] add lisense header (#16)
+
+---
+ build.sh                                                        | 1 +
+ docs/_static/css/custom.css                                     | 1 +
+ docs/template_extension/custom_op/CMakeLists.txt                | 0
+ docs/template_extension/custom_op/extension.cpp                 | 0
+ docs/template_extension/custom_op/flow_warp.cpp                 | 1 +
+ docs/template_extension/custom_op/flow_warp.h                   | 1 +
+ docs/template_extension/custom_op/flow_warp_custom_op.cpp       | 0
+ docs/template_extension/custom_op/flow_warp_custom_op.h         | 0
+ flow_warp_custom_op/flow_warp.cl                                | 1 +
+ flow_warp_custom_op/flow_warp.xml                               | 1 +
+ samples/cpp/basicvsr/CMakeLists.txt                             | 2 +-
+ samples/cpp/basicvsr/main.cpp                                   | 1 +
+ tools/mo/openvino/tools/mo/back/offline_transformations.py      | 0
+ .../front/onnx/flow_warp_custom_op_ext.py                       | 1 +
+ .../tools/mo/custom_op_mo_extension/ops/flow_warp_custom_op.py  | 1 +
+ vsr_opt/configs/basicvsr_x2_cuc.py                              | 1 +
+ vsr_opt/flow_warp_pytorch_op/flow_warp_op.cpp                   | 1 +
+ vsr_opt/flow_warp_pytorch_op/setup.py                           | 1 +
+ vsr_opt/mmedit/__init__.py                                      | 1 +
+ vsr_opt/mmedit/models/__init__.py                               | 1 +
+ vsr_opt/mmedit/models/backbones/__init__.py                     | 1 +
+ vsr_opt/mmedit/models/backbones/sr_backbones/__init__.py        | 1 +
+ vsr_opt/mmedit/models/backbones/sr_backbones/basicvsr_net.py    | 1 +
+ vsr_opt/mmedit/models/base.py                                   | 1 +
+ vsr_opt/mmedit/models/builder.py                                | 1 +
+ vsr_opt/mmedit/models/common/__init__.py                        | 1 +
+ vsr_opt/mmedit/models/common/flow_warp.py                       | 1 +
+ vsr_opt/mmedit/models/common/sr_backbone_utils.py               | 1 +
+ vsr_opt/mmedit/models/common/upsample.py                        | 1 +
+ vsr_opt/mmedit/models/losses/__init__.py                        | 1 +
+ vsr_opt/mmedit/models/losses/pixelwise_loss.py                  | 1 +
+ vsr_opt/mmedit/models/losses/utils.py                           | 1 +
+ vsr_opt/mmedit/models/registry.py                               | 1 +
+ vsr_opt/mmedit/models/restorers/__init__.py                     | 1 +
+ vsr_opt/mmedit/models/restorers/basic_restorer.py               | 1 +
+ vsr_opt/mmedit/models/restorers/basicvsr.py                     | 1 +
+ vsr_opt/mmedit/version.py                                       | 2 +-
+ vsr_opt/samples/basicvsr_inference_sample.py                    | 1 +
+ vsr_opt/samples/patch_utils.py                                  | 1 +
+ vsr_opt/tools/pytorch2onnx.py                                   | 1 +
+ vsr_opt/tools/quantization.py                                   | 1 +
+ 41 files changed, 36 insertions(+), 2 deletions(-)
+ mode change 100644 => 100755 docs/template_extension/custom_op/CMakeLists.txt
+ mode change 100644 => 100755 docs/template_extension/custom_op/extension.cpp
+ mode change 100644 => 100755 docs/template_extension/custom_op/flow_warp.cpp
+ mode change 100644 => 100755 docs/template_extension/custom_op/flow_warp.h
+ mode change 100644 => 100755 docs/template_extension/custom_op/flow_warp_custom_op.cpp
+ mode change 100644 => 100755 docs/template_extension/custom_op/flow_warp_custom_op.h
+ mode change 100644 => 100755 flow_warp_custom_op/flow_warp.cl
+ mode change 100644 => 100755 flow_warp_custom_op/flow_warp.xml
+ mode change 100644 => 100755 tools/mo/openvino/tools/mo/back/offline_transformations.py
+ mode change 100644 => 100755 tools/mo/openvino/tools/mo/custom_op_mo_extension/front/onnx/flow_warp_custom_op_ext.py
+ mode change 100644 => 100755 tools/mo/openvino/tools/mo/custom_op_mo_extension/ops/flow_warp_custom_op.py
+ mode change 100644 => 100755 vsr_opt/configs/basicvsr_x2_cuc.py
+ mode change 100644 => 100755 vsr_opt/flow_warp_pytorch_op/flow_warp_op.cpp
+ mode change 100644 => 100755 vsr_opt/flow_warp_pytorch_op/setup.py
+ mode change 100644 => 100755 vsr_opt/mmedit/__init__.py
+ mode change 100644 => 100755 vsr_opt/mmedit/models/__init__.py
+ mode change 100644 => 100755 vsr_opt/mmedit/models/backbones/__init__.py
+ mode change 100644 => 100755 vsr_opt/mmedit/models/backbones/sr_backbones/__init__.py
+ mode change 100644 => 100755 vsr_opt/mmedit/models/backbones/sr_backbones/basicvsr_net.py
+ mode change 100644 => 100755 vsr_opt/mmedit/models/base.py
+ mode change 100644 => 100755 vsr_opt/mmedit/models/builder.py
+ mode change 100644 => 100755 vsr_opt/mmedit/models/common/__init__.py
+ mode change 100644 => 100755 vsr_opt/mmedit/models/common/flow_warp.py
+ mode change 100644 => 100755 vsr_opt/mmedit/models/common/sr_backbone_utils.py
+ mode change 100644 => 100755 vsr_opt/mmedit/models/common/upsample.py
+ mode change 100644 => 100755 vsr_opt/mmedit/models/losses/__init__.py
+ mode change 100644 => 100755 vsr_opt/mmedit/models/losses/pixelwise_loss.py
+ mode change 100644 => 100755 vsr_opt/mmedit/models/losses/utils.py
+ mode change 100644 => 100755 vsr_opt/mmedit/models/registry.py
+ mode change 100644 => 100755 vsr_opt/mmedit/models/restorers/__init__.py
+ mode change 100644 => 100755 vsr_opt/mmedit/models/restorers/basic_restorer.py
+ mode change 100644 => 100755 vsr_opt/mmedit/models/restorers/basicvsr.py
+ mode change 100644 => 100755 vsr_opt/mmedit/version.py
+ mode change 100644 => 100755 vsr_opt/tools/pytorch2onnx.py
+ mode change 100644 => 100755 vsr_opt/tools/quantization.py
+
+diff --git a/build.sh b/build.sh
+index 31420303ad..4690497c61 100755
+--- a/build.sh
++++ b/build.sh
+@@ -1,3 +1,4 @@
++# Copyright (C) 2022 Intel Corporation
+ #!/bin/sh
+ #git submodule update --init --recursive
+ #apt-get install python3-dev
+diff --git a/docs/_static/css/custom.css b/docs/_static/css/custom.css
+index ec4778401e..79bba79d89 100644
+--- a/docs/_static/css/custom.css
++++ b/docs/_static/css/custom.css
+@@ -1,3 +1,4 @@
++/* Copyright (C) 2022 Intel Corporation */
+ .switcher-set {
+     margin-bottom:1rem;
+ }
+diff --git a/docs/template_extension/custom_op/CMakeLists.txt b/docs/template_extension/custom_op/CMakeLists.txt
+old mode 100644
+new mode 100755
+diff --git a/docs/template_extension/custom_op/extension.cpp b/docs/template_extension/custom_op/extension.cpp
+old mode 100644
+new mode 100755
+diff --git a/docs/template_extension/custom_op/flow_warp.cpp b/docs/template_extension/custom_op/flow_warp.cpp
+old mode 100644
+new mode 100755
+index 443db48743..785dfbe1ce
+--- a/docs/template_extension/custom_op/flow_warp.cpp
++++ b/docs/template_extension/custom_op/flow_warp.cpp
+@@ -1,3 +1,4 @@
++// Copyright (C) 2022 Intel Corporation
+ // #include <torch/script.h>
+ #include <vector>
+ #include <iostream>
+diff --git a/docs/template_extension/custom_op/flow_warp.h b/docs/template_extension/custom_op/flow_warp.h
+old mode 100644
+new mode 100755
+index 0b09de521e..c784f54b7f
+--- a/docs/template_extension/custom_op/flow_warp.h
++++ b/docs/template_extension/custom_op/flow_warp.h
+@@ -1,3 +1,4 @@
++// Copyright (C) 2022 Intel Corporation
+ extern "C"{
+     void flow_warp(const float*input_data,std::vector<size_t> input_dim,float*flow_data,std::vector<size_t> flow_dim,float*output_ptr);
+     void flow_warp_int8(const int8_t*input_data,std::vector<size_t> input_dim,int8_t*flow_data,std::vector<size_t> flow_dim,int8_t*out_ptr);
+diff --git a/docs/template_extension/custom_op/flow_warp_custom_op.cpp b/docs/template_extension/custom_op/flow_warp_custom_op.cpp
+old mode 100644
+new mode 100755
+diff --git a/docs/template_extension/custom_op/flow_warp_custom_op.h b/docs/template_extension/custom_op/flow_warp_custom_op.h
+old mode 100644
+new mode 100755
+diff --git a/flow_warp_custom_op/flow_warp.cl b/flow_warp_custom_op/flow_warp.cl
+old mode 100644
+new mode 100755
+index 5972e85e22..f733b3a86a
+--- a/flow_warp_custom_op/flow_warp.cl
++++ b/flow_warp_custom_op/flow_warp.cl
+@@ -1,3 +1,4 @@
++// Copyright (C) 2022 Intel Corporation
+ //OCL custom layer implementation for flow_warp
+ //Author: Renzhi.Jiang@Intel.com
+ //currently only support {padding:0, Bilinear interpolation, align corners:true}
+diff --git a/flow_warp_custom_op/flow_warp.xml b/flow_warp_custom_op/flow_warp.xml
+old mode 100644
+new mode 100755
+index 5c42599fbc..cebd445a40
+--- a/flow_warp_custom_op/flow_warp.xml
++++ b/flow_warp_custom_op/flow_warp.xml
+@@ -1,3 +1,4 @@
++<!-- Copyright (C) 2022 Intel Corporation -->
+ <!-- configuration file for flow warp kernel -->
+ <CustomLayer name="flow_warp" type="SimpleGPU" version="1">
+   <Kernel entry="flow_warp">
+diff --git a/samples/cpp/basicvsr/CMakeLists.txt b/samples/cpp/basicvsr/CMakeLists.txt
+index 2d16a7f4cc..306d5736cd 100755
+--- a/samples/cpp/basicvsr/CMakeLists.txt
++++ b/samples/cpp/basicvsr/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-# Copyright (C) 2018-2022 Intel Corporation
++# Copyright (C) 2022 Intel Corporation
+ # SPDX-License-Identifier: Apache-2.0
+ #
+ 
+diff --git a/samples/cpp/basicvsr/main.cpp b/samples/cpp/basicvsr/main.cpp
+index b3f10f39b5..bd8267cb25 100755
+--- a/samples/cpp/basicvsr/main.cpp
++++ b/samples/cpp/basicvsr/main.cpp
+@@ -1,3 +1,4 @@
++// Copyright (C) 2022 Intel Corporation
+ // main.cpp included
+ #include <algorithm>
+ #include <chrono>
+diff --git a/tools/mo/openvino/tools/mo/back/offline_transformations.py b/tools/mo/openvino/tools/mo/back/offline_transformations.py
+old mode 100644
+new mode 100755
+diff --git a/tools/mo/openvino/tools/mo/custom_op_mo_extension/front/onnx/flow_warp_custom_op_ext.py b/tools/mo/openvino/tools/mo/custom_op_mo_extension/front/onnx/flow_warp_custom_op_ext.py
+old mode 100644
+new mode 100755
+index 2b43296c7a..e91b57b9cd
+--- a/tools/mo/openvino/tools/mo/custom_op_mo_extension/front/onnx/flow_warp_custom_op_ext.py
++++ b/tools/mo/openvino/tools/mo/custom_op_mo_extension/front/onnx/flow_warp_custom_op_ext.py
+@@ -1,3 +1,4 @@
++# Copyright (C) 2022 Intel Corporation
+ from openvino.tools.mo.front.extractor import FrontExtractorOp
+ from openvino.tools.mo.ops.op import Op
+ from openvino.tools.mo.custom_op_mo_extension.ops.flow_warp_custom_op import FlowWarp
+diff --git a/tools/mo/openvino/tools/mo/custom_op_mo_extension/ops/flow_warp_custom_op.py b/tools/mo/openvino/tools/mo/custom_op_mo_extension/ops/flow_warp_custom_op.py
+old mode 100644
+new mode 100755
+index 41bab195eb..1baf086dd7
+--- a/tools/mo/openvino/tools/mo/custom_op_mo_extension/ops/flow_warp_custom_op.py
++++ b/tools/mo/openvino/tools/mo/custom_op_mo_extension/ops/flow_warp_custom_op.py
+@@ -1,3 +1,4 @@
++# Copyright (C) 2022 Intel Corporation
+ import numpy as np
+ 
+ # from openvino.tools.mo.front.extractor import bool_to_str
+diff --git a/vsr_opt/configs/basicvsr_x2_cuc.py b/vsr_opt/configs/basicvsr_x2_cuc.py
+old mode 100644
+new mode 100755
+index ebba1c4b13..a2f5476240
+--- a/vsr_opt/configs/basicvsr_x2_cuc.py
++++ b/vsr_opt/configs/basicvsr_x2_cuc.py
+@@ -1,3 +1,4 @@
++
+ exp_name = 'basicvsr_x2_cuc'
+ 
+ # model settings
+diff --git a/vsr_opt/flow_warp_pytorch_op/flow_warp_op.cpp b/vsr_opt/flow_warp_pytorch_op/flow_warp_op.cpp
+old mode 100644
+new mode 100755
+index 4441e39ba0..87e274945d
+--- a/vsr_opt/flow_warp_pytorch_op/flow_warp_op.cpp
++++ b/vsr_opt/flow_warp_pytorch_op/flow_warp_op.cpp
+@@ -1,3 +1,4 @@
++// Copyright (C) 2022 Intel Corporation
+ #include <torch/script.h>
+ #include <vector>
+ #include <iostream>
+diff --git a/vsr_opt/flow_warp_pytorch_op/setup.py b/vsr_opt/flow_warp_pytorch_op/setup.py
+old mode 100644
+new mode 100755
+index 553fd277b2..45b204273a
+--- a/vsr_opt/flow_warp_pytorch_op/setup.py
++++ b/vsr_opt/flow_warp_pytorch_op/setup.py
+@@ -1,3 +1,4 @@
++# Copyright (C) 2022 Intel Corporation
+ # SPDX-License-Identifier: Apache-2.0
+ 
+ from setuptools import setup
+diff --git a/vsr_opt/mmedit/__init__.py b/vsr_opt/mmedit/__init__.py
+old mode 100644
+new mode 100755
+index 05d4c20b70..1cf1f392fe
+--- a/vsr_opt/mmedit/__init__.py
++++ b/vsr_opt/mmedit/__init__.py
+@@ -1,4 +1,5 @@
+ # Copyright (c) OpenMMLab. All rights reserved.
++# Copyright (C) 2022 Intel Corporation
+ import mmcv
+ 
+ from .version import __version__, version_info
+diff --git a/vsr_opt/mmedit/models/__init__.py b/vsr_opt/mmedit/models/__init__.py
+old mode 100644
+new mode 100755
+index f35751e3fd..dad4e8f942
+--- a/vsr_opt/mmedit/models/__init__.py
++++ b/vsr_opt/mmedit/models/__init__.py
+@@ -1,4 +1,5 @@
+ # Copyright (c) OpenMMLab. All rights reserved.
++# Copyright (C) 2022 Intel Corporation
+ from .backbones import *  # noqa: F401, F403
+ from .base import BaseModel
+ from .builder import (build, build_backbone, build_component, build_loss,
+diff --git a/vsr_opt/mmedit/models/backbones/__init__.py b/vsr_opt/mmedit/models/backbones/__init__.py
+old mode 100644
+new mode 100755
+index a41ec00f3a..b713ebe093
+--- a/vsr_opt/mmedit/models/backbones/__init__.py
++++ b/vsr_opt/mmedit/models/backbones/__init__.py
+@@ -1,4 +1,5 @@
+ # Copyright (c) OpenMMLab. All rights reserved.
++# Copyright (C) 2022 Intel Corporation
+ from .sr_backbones import (BasicVSRNet)
+ 
+ __all__ = [
+diff --git a/vsr_opt/mmedit/models/backbones/sr_backbones/__init__.py b/vsr_opt/mmedit/models/backbones/sr_backbones/__init__.py
+old mode 100644
+new mode 100755
+index d2a8ce394d..5d41810137
+--- a/vsr_opt/mmedit/models/backbones/sr_backbones/__init__.py
++++ b/vsr_opt/mmedit/models/backbones/sr_backbones/__init__.py
+@@ -1,4 +1,5 @@
+ # Copyright (c) OpenMMLab. All rights reserved.
++# Copyright (C) 2022 Intel Corporation
+ from .basicvsr_net import BasicVSRNet
+ 
+ 
+diff --git a/vsr_opt/mmedit/models/backbones/sr_backbones/basicvsr_net.py b/vsr_opt/mmedit/models/backbones/sr_backbones/basicvsr_net.py
+old mode 100644
+new mode 100755
+index a1e1dcb6be..12917b8dc8
+--- a/vsr_opt/mmedit/models/backbones/sr_backbones/basicvsr_net.py
++++ b/vsr_opt/mmedit/models/backbones/sr_backbones/basicvsr_net.py
+@@ -1,4 +1,5 @@
+ # Copyright (c) OpenMMLab. All rights reserved.
++# Copyright (C) 2022 Intel Corporation
+ import torch
+ import torch.nn as nn
+ import torch.nn.functional as F
+diff --git a/vsr_opt/mmedit/models/base.py b/vsr_opt/mmedit/models/base.py
+old mode 100644
+new mode 100755
+index 02327e2832..590b13d034
+--- a/vsr_opt/mmedit/models/base.py
++++ b/vsr_opt/mmedit/models/base.py
+@@ -1,4 +1,5 @@
+ # Copyright (c) OpenMMLab. All rights reserved.
++# Copyright (C) 2022 Intel Corporation
+ from abc import ABCMeta, abstractmethod
+ from collections import OrderedDict
+ 
+diff --git a/vsr_opt/mmedit/models/builder.py b/vsr_opt/mmedit/models/builder.py
+old mode 100644
+new mode 100755
+index 8606225aa6..5961f4a2db
+--- a/vsr_opt/mmedit/models/builder.py
++++ b/vsr_opt/mmedit/models/builder.py
+@@ -1,4 +1,5 @@
+ # Copyright (c) OpenMMLab. All rights reserved.
++# Copyright (C) 2022 Intel Corporation
+ import torch.nn as nn
+ from mmcv import build_from_cfg
+ 
+diff --git a/vsr_opt/mmedit/models/common/__init__.py b/vsr_opt/mmedit/models/common/__init__.py
+old mode 100644
+new mode 100755
+index 4b01e48d6e..457f1c1aae
+--- a/vsr_opt/mmedit/models/common/__init__.py
++++ b/vsr_opt/mmedit/models/common/__init__.py
+@@ -1,4 +1,5 @@
+ # Copyright (c) OpenMMLab. All rights reserved.
++# Copyright (C) 2022 Intel Corporation
+ from .flow_warp import flow_warp
+ from .sr_backbone_utils import (ResidualBlockNoBN, default_init_weights,
+                                 make_layer)
+diff --git a/vsr_opt/mmedit/models/common/flow_warp.py b/vsr_opt/mmedit/models/common/flow_warp.py
+old mode 100644
+new mode 100755
+index 9b20e30163..57b99d0468
+--- a/vsr_opt/mmedit/models/common/flow_warp.py
++++ b/vsr_opt/mmedit/models/common/flow_warp.py
+@@ -1,4 +1,5 @@
+ # Copyright (c) OpenMMLab. All rights reserved.
++# Copyright (C) 2022 Intel Corporation
+ import torch
+ import torch.nn.functional as F
+ from mmcv.ops.point_sample import bilinear_grid_sample
+diff --git a/vsr_opt/mmedit/models/common/sr_backbone_utils.py b/vsr_opt/mmedit/models/common/sr_backbone_utils.py
+old mode 100644
+new mode 100755
+index b4b0aad915..276b3e478b
+--- a/vsr_opt/mmedit/models/common/sr_backbone_utils.py
++++ b/vsr_opt/mmedit/models/common/sr_backbone_utils.py
+@@ -1,4 +1,5 @@
+ # Copyright (c) OpenMMLab. All rights reserved.
++# Copyright (C) 2022 Intel Corporation
+ import torch.nn as nn
+ from mmcv.cnn import constant_init, kaiming_init
+ from mmcv.utils.parrots_wrapper import _BatchNorm
+diff --git a/vsr_opt/mmedit/models/common/upsample.py b/vsr_opt/mmedit/models/common/upsample.py
+old mode 100644
+new mode 100755
+index f39ec1a9e4..9f17723216
+--- a/vsr_opt/mmedit/models/common/upsample.py
++++ b/vsr_opt/mmedit/models/common/upsample.py
+@@ -1,4 +1,5 @@
+ # Copyright (c) OpenMMLab. All rights reserved.
++# Copyright (C) 2022 Intel Corporation
+ import torch.nn as nn
+ import torch.nn.functional as F
+ 
+diff --git a/vsr_opt/mmedit/models/losses/__init__.py b/vsr_opt/mmedit/models/losses/__init__.py
+old mode 100644
+new mode 100755
+index 7ea4d03db8..77a4758dee
+--- a/vsr_opt/mmedit/models/losses/__init__.py
++++ b/vsr_opt/mmedit/models/losses/__init__.py
+@@ -1,3 +1,4 @@
++# Copyright (C) 2022 Intel Corporation
+ from .pixelwise_loss import CharbonnierLoss
+ 
+ __all__ = [
+diff --git a/vsr_opt/mmedit/models/losses/pixelwise_loss.py b/vsr_opt/mmedit/models/losses/pixelwise_loss.py
+old mode 100644
+new mode 100755
+index 2f2435b8d3..189b848707
+--- a/vsr_opt/mmedit/models/losses/pixelwise_loss.py
++++ b/vsr_opt/mmedit/models/losses/pixelwise_loss.py
+@@ -1,4 +1,5 @@
+ # Copyright (c) OpenMMLab. All rights reserved.
++# Copyright (C) 2022 Intel Corporation
+ import torch
+ import torch.nn as nn
+ import torch.nn.functional as F
+diff --git a/vsr_opt/mmedit/models/losses/utils.py b/vsr_opt/mmedit/models/losses/utils.py
+old mode 100644
+new mode 100755
+index 2f536d9243..0182ef6c8f
+--- a/vsr_opt/mmedit/models/losses/utils.py
++++ b/vsr_opt/mmedit/models/losses/utils.py
+@@ -1,4 +1,5 @@
+ # Copyright (c) OpenMMLab. All rights reserved.
++# Copyright (C) 2022 Intel Corporation
+ import functools
+ 
+ import torch.nn.functional as F
+diff --git a/vsr_opt/mmedit/models/registry.py b/vsr_opt/mmedit/models/registry.py
+old mode 100644
+new mode 100755
+index 0a574b6678..4f3e5aab7c
+--- a/vsr_opt/mmedit/models/registry.py
++++ b/vsr_opt/mmedit/models/registry.py
+@@ -1,4 +1,5 @@
+ # Copyright (c) OpenMMLab. All rights reserved.
++# Copyright (C) 2022 Intel Corporation
+ from mmcv.cnn import MODELS as MMCV_MODELS
+ from mmcv.utils import Registry
+ 
+diff --git a/vsr_opt/mmedit/models/restorers/__init__.py b/vsr_opt/mmedit/models/restorers/__init__.py
+old mode 100644
+new mode 100755
+index a5a60b0950..c4f38daf03
+--- a/vsr_opt/mmedit/models/restorers/__init__.py
++++ b/vsr_opt/mmedit/models/restorers/__init__.py
+@@ -1,4 +1,5 @@
+ # Copyright (c) OpenMMLab. All rights reserved.
++# Copyright (C) 2022 Intel Corporation
+ from .basic_restorer import BasicRestorer
+ from .basicvsr import BasicVSR
+ 
+diff --git a/vsr_opt/mmedit/models/restorers/basic_restorer.py b/vsr_opt/mmedit/models/restorers/basic_restorer.py
+old mode 100644
+new mode 100755
+index e8c15ed664..a3e99b5e78
+--- a/vsr_opt/mmedit/models/restorers/basic_restorer.py
++++ b/vsr_opt/mmedit/models/restorers/basic_restorer.py
+@@ -1,4 +1,5 @@
+ # Copyright (c) OpenMMLab. All rights reserved.
++# Copyright (C) 2022 Intel Corporation
+ import numbers
+ import os.path as osp
+ 
+diff --git a/vsr_opt/mmedit/models/restorers/basicvsr.py b/vsr_opt/mmedit/models/restorers/basicvsr.py
+old mode 100644
+new mode 100755
+index 473a9e0038..accdb04871
+--- a/vsr_opt/mmedit/models/restorers/basicvsr.py
++++ b/vsr_opt/mmedit/models/restorers/basicvsr.py
+@@ -1,4 +1,5 @@
+ # Copyright (c) OpenMMLab. All rights reserved.
++# Copyright (C) 2022 Intel Corporation
+ import numbers
+ import os.path as osp
+ 
+diff --git a/vsr_opt/mmedit/version.py b/vsr_opt/mmedit/version.py
+old mode 100644
+new mode 100755
+index e397b0bc50..275ef8bf5d
+--- a/vsr_opt/mmedit/version.py
++++ b/vsr_opt/mmedit/version.py
+@@ -1,5 +1,5 @@
+ # Copyright (c) Open-MMLab. All rights reserved.
+-
++# Copyright (C) 2022 Intel Corporation
+ __version__ = '0.14.0'
+ 
+ 
+diff --git a/vsr_opt/samples/basicvsr_inference_sample.py b/vsr_opt/samples/basicvsr_inference_sample.py
+index 3c944443f7..35422c6a2c 100755
+--- a/vsr_opt/samples/basicvsr_inference_sample.py
++++ b/vsr_opt/samples/basicvsr_inference_sample.py
+@@ -1,3 +1,4 @@
++# Copyright (C) 2022 Intel Corporation
+ #!/usr/bin/env python
+ # coding=utf-8
+ import argparse
+diff --git a/vsr_opt/samples/patch_utils.py b/vsr_opt/samples/patch_utils.py
+index 44c6a5d3df..b5f81549a7 100755
+--- a/vsr_opt/samples/patch_utils.py
++++ b/vsr_opt/samples/patch_utils.py
+@@ -1,3 +1,4 @@
++# Copyright (C) 2022 Intel Corporation
+ import numpy as np
+ 
+ def caulate_random_crop_coordinate(ori_size, crop_size, blocks):
+diff --git a/vsr_opt/tools/pytorch2onnx.py b/vsr_opt/tools/pytorch2onnx.py
+old mode 100644
+new mode 100755
+index fec52e6c10..db71e2db41
+--- a/vsr_opt/tools/pytorch2onnx.py
++++ b/vsr_opt/tools/pytorch2onnx.py
+@@ -1,3 +1,4 @@
++# Copyright (C) 2022 Intel Corporation
+ import torch
+ import argparse
+ import os
+diff --git a/vsr_opt/tools/quantization.py b/vsr_opt/tools/quantization.py
+old mode 100644
+new mode 100755
+index c5455317ba..6df740e843
+--- a/vsr_opt/tools/quantization.py
++++ b/vsr_opt/tools/quantization.py
+@@ -1,3 +1,4 @@
++# Copyright (C) 2022 Intel Corporation
+ import os
+ import torch
+ import numpy as np
+-- 
+2.25.1
+

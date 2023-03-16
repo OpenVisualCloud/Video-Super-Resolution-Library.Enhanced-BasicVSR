@@ -1,0 +1,3678 @@
+From 8e28d765146ac261aba4ff5943dc285a6fb610e9 Mon Sep 17 00:00:00 2001
+From: YanjiePa <yanjie.pan@intel.com>
+Date: Wed, 7 Sep 2022 12:45:28 +0800
+Subject: [PATCH 01/17] Vsr opt dev (#2)
+
+* fix gather_elements implementation error
+
+* add INT8 support for gather_elements output
+
+* fix the interpolate calc error between CPU/GPU
+
+* change configuration for cross check tool
+
+* optimize memory reuse mechanism
+
+* custom op implementation
+
+* POT patch for memory issue
+
+* MO patch for custom op extension
+
+* VSR Introduction
+
+* rename and add in python infer samples
+
+* Submit build script (#1)
+
+* optimize concate_simple_ref kernel
+
+add OUTPUT_LAYOUT_B_FS_YX_FSV16 format support;
+optimize gws layout to improve performance;
+
+* add build script
+
+run the build script as ./build.sh Release
+
+* Add a new requirements.txt
+
+Signed-off-by: Pan, Yanjie <yanjie.pan@intel.com>
+
+Signed-off-by: Pan, Yanjie <yanjie.pan@intel.com>
+Co-authored-by: Jiang, Renzhi <Renzhi.Jiang@intel.com>
+Co-authored-by: Long Kun <kun.long@intel.com>
+---
+ build.sh                                      |  38 +
+ docs/template_extension/CMakeLists.txt        |   1 +
+ .../custom_op/CMakeLists.txt                  |  22 +
+ .../custom_op/extension.cpp                   |  23 +
+ .../custom_op/flow_warp.cpp                   | 674 ++++++++++++++++++
+ docs/template_extension/custom_op/flow_warp.h |   5 +
+ .../custom_op/flow_warp_custom_op.cpp         |  75 ++
+ .../custom_op/flow_warp_custom_op.h           |  29 +
+ requirements.txt                              |   2 +
+ .../intel_cpu/src/nodes/interpolate.cpp       |   4 +-
+ src/plugins/intel_cpu/thirdparty/onednn       |   1 +
+ .../include/intel_gpu/runtime/engine.hpp      |   2 +-
+ .../include/intel_gpu/runtime/memory_pool.hpp |  10 +-
+ .../intel_gpu/src/graph/gather_elements.cpp   |   2 +-
+ .../intel_gpu/src/graph/primitive_inst.cpp    |  29 +-
+ src/plugins/intel_gpu/src/graph/program.cpp   |   6 +-
+ .../concatenation_kernel_simple_ref.cpp       |   9 +-
+ .../gather/gather_elements_kernel_ref.cpp     |   2 +
+ .../concatenation_gpu_simple_ref.cl           |  27 +-
+ .../intel_gpu/src/runtime/memory_pool.cpp     | 151 +++-
+ .../intel_gpu/src/runtime/ocl/ocl_engine.cpp  |  12 +-
+ .../intel_gpu/src/runtime/ocl/ocl_engine.hpp  |   2 +-
+ .../openvino/tools/cross_check_tool/utils.py  |   6 +-
+ .../tools/mo/back/offline_transformations.py  |   1 +
+ .../front/onnx/flow_warp_custom_op_ext.py     |  14 +
+ .../ops/flow_warp_custom_op.py                |  21 +
+ .../mo/openvino/tools/mo/utils/cli_parser.py  |   6 +
+ .../openvino/tools/pot/engines/ie_engine.py   | 108 ++-
+ vsr_opt/VSR Introduction.md                   |  32 +
+ vsr_opt/samples/ReadMe.md                     |  31 +
+ vsr_opt/samples/basicvsr_infer.py             | 256 +++++++
+ vsr_opt/samples/basicvsr_metrics.py           | 327 +++++++++
+ vsr_opt/samples/crop_restore_image.py         | 335 +++++++++
+ vsr_opt/samples/quantization_basicvsr.py      | 149 ++++
+ vsr_opt/samples/quantization_dataloader.py    | 100 +++
+ vsr_opt/tools/pytorch2onnx.py                 |  46 ++
+ vsr_opt/tools/quantization.py                 | 517 ++++++++++++++
+ 37 files changed, 3008 insertions(+), 67 deletions(-)
+ create mode 100755 build.sh
+ create mode 100644 docs/template_extension/custom_op/CMakeLists.txt
+ create mode 100644 docs/template_extension/custom_op/extension.cpp
+ create mode 100644 docs/template_extension/custom_op/flow_warp.cpp
+ create mode 100644 docs/template_extension/custom_op/flow_warp.h
+ create mode 100644 docs/template_extension/custom_op/flow_warp_custom_op.cpp
+ create mode 100644 docs/template_extension/custom_op/flow_warp_custom_op.h
+ create mode 100644 requirements.txt
+ create mode 160000 src/plugins/intel_cpu/thirdparty/onednn
+ mode change 100644 => 100755 tools/cross_check_tool/openvino/tools/cross_check_tool/utils.py
+ create mode 100644 tools/mo/openvino/tools/mo/custom_op_mo_extension/front/onnx/flow_warp_custom_op_ext.py
+ create mode 100644 tools/mo/openvino/tools/mo/custom_op_mo_extension/ops/flow_warp_custom_op.py
+ create mode 100644 vsr_opt/VSR Introduction.md
+ create mode 100755 vsr_opt/samples/ReadMe.md
+ create mode 100755 vsr_opt/samples/basicvsr_infer.py
+ create mode 100755 vsr_opt/samples/basicvsr_metrics.py
+ create mode 100755 vsr_opt/samples/crop_restore_image.py
+ create mode 100755 vsr_opt/samples/quantization_basicvsr.py
+ create mode 100755 vsr_opt/samples/quantization_dataloader.py
+ create mode 100644 vsr_opt/tools/pytorch2onnx.py
+ create mode 100644 vsr_opt/tools/quantization.py
+
+diff --git a/build.sh b/build.sh
+new file mode 100755
+index 0000000000..fa5ff5d06e
+--- /dev/null
++++ b/build.sh
+@@ -0,0 +1,38 @@
++#!/bin/sh
++#git submodule update --init --recursive
++#apt-get install python3-dev
++#pip install cython
++
++mkdir build
++cd build
++
++cmake \
++-DCMAKE_INSTALL_PREFIX=${PWD}/../install \
++-DENABLE_INTEL_CPU=ON \
++-DENABLE_CLDNN=ON \
++-DENABLE_INTEL_GPU=ON \
++-DENABLE_ONEDNN_FOR_GPU=OFF \
++-DENABLE_INTEL_GNA=OFF \
++-DENABLE_INTEL_MYRIAD_COMMON=OFF \
++-DENABLE_INTEL_MYRIAD=OFF \
++-DENABLE_PYTHON=ON \
++-DENABLE_OPENCV=ON \
++-DENABLE_SAMPLES=ON \
++-DENABLE_CPPLINT=OFF \
++-DTREAT_WARNING_AS_ERROR=OFF \
++-DENABLE_TESTS=OFF \
++-DENABLE_GAPI_TESTS=OFF \
++-DENABLE_BEH_TESTS=OFF \
++-DENABLE_FUNCTIONAL_TESTS=OFF \
++-DENABLE_OV_CORE_UNIT_TESTS=OFF \
++-DENABLE_OV_CORE_BACKEND_UNIT_TESTS=OFF \
++-DENABLE_DEBUG_CAPS=ON \
++-DENABLE_GPU_DEBUG_CAPS=ON \
++-DENABLE_CPU_DEBUG_CAPS=ON \
++-DCMAKE_BUILD_TYPE=$1 \
++ ..
++
++make -j`nproc`
++
++make install
++
+diff --git a/docs/template_extension/CMakeLists.txt b/docs/template_extension/CMakeLists.txt
+index 46e6c9b2c0..9eceb1f8db 100644
+--- a/docs/template_extension/CMakeLists.txt
++++ b/docs/template_extension/CMakeLists.txt
+@@ -4,3 +4,4 @@
+ 
+ add_subdirectory(old)
+ add_subdirectory(new)
++add_subdirectory(custom_op)
+diff --git a/docs/template_extension/custom_op/CMakeLists.txt b/docs/template_extension/custom_op/CMakeLists.txt
+new file mode 100644
+index 0000000000..12b3039eb4
+--- /dev/null
++++ b/docs/template_extension/custom_op/CMakeLists.txt
+@@ -0,0 +1,22 @@
++# Copyright (C) 2018-2022 Intel Corporation
++# SPDX-License-Identifier: Apache-2.0
++#
++
++# [cmake:extension]
++set(CMAKE_CXX_STANDARD 11)
++
++set(TARGET_NAME "custom_extension")
++
++find_package(OpenVINO)
++
++set(SRC flow_warp_custom_op.cpp extension.cpp flow_warp.cpp)
++
++add_library(${TARGET_NAME} MODULE ${SRC})
++
++target_compile_definitions(${TARGET_NAME} PRIVATE IMPLEMENT_OPENVINO_EXTENSION_API)
++target_link_libraries(${TARGET_NAME} PRIVATE openvino::runtime)
++# [cmake:extension]
++
++# Enable code style check
++# file(GLOB_RECURSE template_extension_src "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/*.hpp")
++# add_clang_format_target(${TARGET_NAME}_clang FOR_SOURCES ${template_extension_src})
+diff --git a/docs/template_extension/custom_op/extension.cpp b/docs/template_extension/custom_op/extension.cpp
+new file mode 100644
+index 0000000000..2df045825c
+--- /dev/null
++++ b/docs/template_extension/custom_op/extension.cpp
+@@ -0,0 +1,23 @@
++// Copyright (C) 2018-2022 Intel Corporation
++// SPDX-License-Identifier: Apache-2.0
++//
++
++#include <openvino/core/extension.hpp>
++#include <openvino/core/op_extension.hpp>
++#include <openvino/frontend/extension.hpp>
++
++#include "flow_warp_custom_op.h"
++
++// clang-format off
++//! [ov_extension:entry_point]
++OPENVINO_CREATE_EXTENSIONS(
++    std::vector<ov::Extension::Ptr>({
++
++        // Register operation itself, required to be read from IR
++        std::make_shared<ov::OpExtension<CustomExtension::FlowWarp>>(),
++
++        // Register operaton mapping, required when converted from framework model format
++        std::make_shared<ov::frontend::OpExtension<CustomExtension::FlowWarp>>()
++    }));
++//! [ov_extension:entry_point]
++// clang-format on
+diff --git a/docs/template_extension/custom_op/flow_warp.cpp b/docs/template_extension/custom_op/flow_warp.cpp
+new file mode 100644
+index 0000000000..e237b9d56d
+--- /dev/null
++++ b/docs/template_extension/custom_op/flow_warp.cpp
+@@ -0,0 +1,674 @@
++// #include <torch/script.h>
++#include <vector>
++#include <iostream>
++#include <cmath>
++#include "flow_warp.h"
++#define MIN(a, b) (((a) < (b)) ? (a) : (b))
++#define MAX(a, b) (((a) < (b)) ? (b) : (a))
++#define CLIP_COORDINATES(in, out, clip_limit) \
++  out = MIN((clip_limit - 1), MAX(in, 0))
++
++enum GridSamplerInterpolation { Bilinear = 0, Nearest = 1, Bicubic = 2 };
++enum GridSamplerPadding { Zeros = 0, Border = 1, Reflection = 2 };
++
++template <typename scalar_t>
++static inline scalar_t grid_sampler_unnormalize(scalar_t coord, int64_t size,
++                                                bool align_corners) {
++  if (align_corners) {
++    return ((coord + 1) / 2) * (size - 1);
++  } else {
++    return ((coord + 1) * size - 1) / 2;
++  }
++}
++
++// Clips coordinates to between 0 and clip_limit - 1
++template <typename scalar_t>
++static inline scalar_t clip_coordinates(scalar_t in, int64_t clip_limit) {
++  return std::min(static_cast<scalar_t>(clip_limit - 1),
++                  std::max(in, static_cast<scalar_t>(0)));
++}
++
++// Reflects coordinates until they fall between low and high (inclusive).
++// The bounds are passed as twice their value so that half-integer values
++// can be represented as ints.
++template <typename scalar_t>
++static inline scalar_t reflect_coordinates(scalar_t in, int64_t twice_low,
++                                           int64_t twice_high) {
++  if (twice_low == twice_high) {
++    return static_cast<scalar_t>(0);
++  }
++  scalar_t min = static_cast<scalar_t>(twice_low) / 2;
++  scalar_t span = static_cast<scalar_t>(twice_high - twice_low) / 2;
++  in = std::fabs(in - min);
++  // `fmod` returns same sign as `in`, which is positive after the `fabs` above.
++  scalar_t extra = std::fmod(in, span);
++  int flips = static_cast<int>(std::floor(in / span));
++  if (flips % 2 == 0) {
++    return extra + min;
++  } else {
++    return span - extra + min;
++  }
++}
++
++template <typename scalar_t>
++static inline scalar_t compute_coordinates(scalar_t coord, int64_t size,
++                                           int64_t padding_mode,
++                                           bool align_corners) {
++  if (padding_mode == GridSamplerPadding::Border) {
++    coord = clip_coordinates(coord, size);
++  } else if (padding_mode == GridSamplerPadding::Reflection) {
++    if (align_corners) {
++      coord = reflect_coordinates(coord, 0, 2 * (size - 1));
++    } else {
++      coord = reflect_coordinates(coord, -1, 2 * size - 1);
++    }
++    coord = clip_coordinates(coord, size);
++  }
++  return coord;
++}
++
++// Computes the pixel source index value for a grid coordinate
++template <typename scalar_t>
++static inline scalar_t grid_sampler_compute_source_index(scalar_t coord,
++                                                         int64_t size,
++                                                         int64_t padding_mode,
++                                                         bool align_corners) {
++  coord = grid_sampler_unnormalize(coord, size, align_corners);
++  coord = compute_coordinates(coord, size, padding_mode, align_corners);
++  return coord;
++}
++
++static inline bool within_bounds_2d(int64_t h, int64_t w, int64_t H,
++                                    int64_t W) {
++  return h >= 0 && h < H && w >= 0 && w < W;
++}
++
++template <typename scalar_t>
++static inline scalar_t get_value_bounded(const scalar_t *data, scalar_t x,
++                                         scalar_t y, int64_t W, int64_t H,
++                                         int64_t sW, int64_t sH,
++                                         int64_t padding_mode,
++                                         bool align_corners) {
++  x = compute_coordinates(x, W, padding_mode, align_corners);
++  y = compute_coordinates(y, H, padding_mode, align_corners);
++
++  int64_t ix = static_cast<int64_t>(x);
++  int64_t iy = static_cast<int64_t>(y);
++
++  if (within_bounds_2d(iy, ix, H, W)) {
++    return data[iy * sH + ix * sW];
++  }
++  return static_cast<scalar_t>(0);
++}
++
++template <typename scalar_t>
++static inline scalar_t cubic_convolution1(scalar_t x, scalar_t A) {
++  return ((A + 2) * x - (A + 3)) * x * x + 1;
++}
++
++template <typename scalar_t>
++static inline scalar_t cubic_convolution2(scalar_t x, scalar_t A) {
++  return ((A * x - 5 * A) * x + 8 * A) * x - 4 * A;
++}
++
++template <typename scalar_t>
++static inline void get_cubic_upsample_coefficients(scalar_t coeffs[4],
++                                                   scalar_t t) {
++  scalar_t A = -0.75;
++
++  scalar_t x1 = t;
++  coeffs[0] = cubic_convolution2<scalar_t>(x1 + 1.0, A);
++  coeffs[1] = cubic_convolution1<scalar_t>(x1, A);
++
++  // opposite coefficients
++  scalar_t x2 = 1.0 - t;
++  coeffs[2] = cubic_convolution1<scalar_t>(x2, A);
++  coeffs[3] = cubic_convolution2<scalar_t>(x2 + 1.0, A);
++}
++
++template <typename scalar_t>
++static inline scalar_t cubic_interp1d(scalar_t x0, scalar_t x1, scalar_t x2,
++                                      scalar_t x3, scalar_t t) {
++  scalar_t coeffs[4];
++  get_cubic_upsample_coefficients<scalar_t>(coeffs, t);
++
++  return x0 * coeffs[0] + x1 * coeffs[1] + x2 * coeffs[2] + x3 * coeffs[3];
++}
++
++#include<cassert>
++void flow_warp(const float*input_data,std::vector<size_t> input_dim,float*flow_data,std::vector<size_t> flow_dim,float*out_ptr){
++    int64_t N = input_dim[0];
++    int64_t C = input_dim[1];
++    int64_t inp_H =input_dim[2];
++    int64_t inp_W = input_dim[3];
++    int64_t out_H =flow_dim[1];
++    int64_t out_W = flow_dim[2];
++
++      // flow warp prehead
++    if(inp_H != out_H || inp_W != out_W){
++        std::cout << "The spatial sizes of input ("<<inp_H<<","<<inp_W<<")"<<" and flow ("<<out_H<<","<<out_W<<") are not the same."<<std::endl;
++        return ;
++    }
++
++    int64_t flow_sN = flow_dim[1] * flow_dim[2] * flow_dim[3];//flow_dims[1] * flow_dims[2] * flow_dims[3];
++    int64_t flow_sH = flow_dim[2] * flow_dim[3];//flow_dims[2] * flow_dims[3];
++    int64_t flow_sW = flow_dim[3]; //flow_dims[3];
++    int64_t flow_sCoor = 1;
++    
++    for (int64_t n = 0; n < N; ++n) {
++        float *flow_ptr_N = flow_data + n * flow_sN;
++        for (int64_t h = 0; h < out_H; ++h) {
++        for (int64_t w = 0; w < out_W; ++w) {
++            float *flow_ptr_NHW = flow_ptr_N + h * flow_sH + w * flow_sW;
++            float * flow_ptr_NHW_x = flow_ptr_NHW;
++            float * flow_ptr_NHW_y = &flow_ptr_NHW[flow_sCoor]; // flow_ptr_NHW + flow_sCoor;
++            *flow_ptr_NHW_x = 2.0 * (*flow_ptr_NHW_x + w) / MAX(out_W - 1, 1) - 1.0;
++            *flow_ptr_NHW_y = 2.0 *(*flow_ptr_NHW_y + h) / MAX(out_H - 1, 1) - 1.0;
++        }
++        }
++    }
++    const float * grid_data = flow_data;
++
++    // bilinear grid sample
++    const bool align_corners = true;
++    const int64_t padding_mode = 0;  // padding_mode: zeros
++    const int64_t interpolation_mode = 0; // interpolation_mode: bilinear
++    
++    int64_t grid_H = flow_dim[1],grid_W = flow_dim[2],grid_C = flow_dim[3];
++    int64_t out_C = C;
++    int64_t inp_sN = C * inp_H * inp_W;//input_dims[1] * input_dims[2] * input_dims[3];
++    int64_t inp_sC = inp_H * inp_W;//input_dims[2] * input_dims[3];
++    int64_t inp_sH = inp_W;//input_dims[3];
++    int64_t inp_sW = 1;
++    int64_t grid_sN = grid_H * grid_W * grid_C;//grid_dims[1] * grid_dims[2] * grid_dims[3];
++    int64_t grid_sH = grid_W * grid_C;//grid_dims[2] * grid_dims[3];
++    int64_t grid_sW = grid_C;//grid_dims[3];
++    int64_t grid_sCoor = 1;
++    int64_t out_sN = out_C * out_H * out_W;//output_dims[1] * output_dims[2] * output_dims[3];
++    int64_t out_sC = out_H * out_W;//output_dims[2] * output_dims[3];
++    int64_t out_sH = out_W;//output_dims[3];
++    int64_t out_sW = 1;
++
++        // loop over each output pixel
++    for (int64_t n = 0; n < N; ++n) {
++        const float *grid_ptr_N = grid_data + n * grid_sN;
++        const float *inp_ptr_N = input_data + n * inp_sN;
++        for (int64_t h = 0; h < out_H; ++h) {
++            for (int64_t w = 0; w < out_W; ++w) {
++                const float *grid_ptr_NHW = grid_ptr_N + h * grid_sH + w * grid_sW;
++                float x = *grid_ptr_NHW;
++                float y = grid_ptr_NHW[grid_sCoor];
++
++                float ix = grid_sampler_compute_source_index(x, inp_W, padding_mode,
++                                                            align_corners);
++                float iy = grid_sampler_compute_source_index(y, inp_H, padding_mode,
++                                                            align_corners);
++
++                if (interpolation_mode == GridSamplerInterpolation::Bilinear) {
++                    // get corner pixel values from (x, y)
++                    // for 4d, we use north-east-south-west
++                    int64_t ix_nw = static_cast<int64_t>(std::floor(ix));
++                    int64_t iy_nw = static_cast<int64_t>(std::floor(iy));
++
++                    int64_t ix_ne = ix_nw + 1;
++                    int64_t iy_ne = iy_nw;
++
++                    int64_t ix_sw = ix_nw;
++                    int64_t iy_sw = iy_nw + 1;
++
++                    int64_t ix_se = ix_nw + 1;
++                    int64_t iy_se = iy_nw + 1;
++
++                    // get surfaces to each neighbor:
++                    float nw = (ix_se - ix) * (iy_se - iy);
++                    float ne = (ix - ix_sw) * (iy_sw - iy);
++                    float sw = (ix_ne - ix) * (iy - iy_ne);
++                    float se = (ix - ix_nw) * (iy - iy_nw);
++
++                    // calculate bilinear weighted pixel value and set output pixel
++                    const float *inp_ptr_NC = inp_ptr_N;
++                    float *out_ptr_NCHW = out_ptr + n * out_sN + h * out_sH + w * out_sW;
++                    for (int64_t c = 0; c < C; ++c, out_ptr_NCHW += out_sC, inp_ptr_NC += inp_sC) {
++                        auto res = static_cast<float>(0);
++                        if (within_bounds_2d(iy_nw, ix_nw, inp_H, inp_W)) {
++                            res += inp_ptr_NC[iy_nw * inp_sH + ix_nw * inp_sW] * nw;
++                        }
++                        if (within_bounds_2d(iy_ne, ix_ne, inp_H, inp_W)) {
++                            res += inp_ptr_NC[iy_ne * inp_sH + ix_ne * inp_sW] * ne;
++                        }
++                        if (within_bounds_2d(iy_sw, ix_sw, inp_H, inp_W)) {
++                            res += inp_ptr_NC[iy_sw * inp_sH + ix_sw * inp_sW] * sw;
++                        }
++                        if (within_bounds_2d(iy_se, ix_se, inp_H, inp_W)) {
++                            res += inp_ptr_NC[iy_se * inp_sH + ix_se * inp_sW] * se;
++                        }
++                        *out_ptr_NCHW = res;
++                    }
++                    } 
++                    else if (interpolation_mode == GridSamplerInterpolation::Nearest) {
++                        int64_t ix_nearest = static_cast<int64_t>(std::nearbyint(ix));
++                        int64_t iy_nearest = static_cast<int64_t>(std::nearbyint(iy));
++
++                        // assign nearest neighbor pixel value to output pixel
++                        float *out_ptr_NCHW = out_ptr + n * out_sN + h * out_sH + w * out_sW;
++                        const float *inp_ptr_NC = inp_ptr_N;
++                        for (int64_t c = 0; c < C;
++                            ++c, out_ptr_NCHW += out_sC, inp_ptr_NC += inp_sC) {
++                            if (within_bounds_2d(iy_nearest, ix_nearest, inp_H, inp_W)) {
++                            *out_ptr_NCHW =
++                                inp_ptr_NC[iy_nearest * inp_sH + ix_nearest * inp_sW];
++                            } else {
++                            *out_ptr_NCHW = static_cast<float>(0);
++                            }
++                        }
++                        }
++                    else if (interpolation_mode == GridSamplerInterpolation::Bicubic) {
++                        // grid_sampler_compute_source_index will "clip the value" of idx
++                        // depends on the padding,
++                        // which would cause calculation to be wrong,
++                        // for example x = -0.1 -> ix = 0 for zero padding, but in bicubic ix
++                        // = floor(x) = -1
++                        // There would be more problem in reflection padding, since the -1 and
++                        // +1 direction is not fixed in boundary condition
++                        ix = grid_sampler_unnormalize(x, inp_W, align_corners);
++                        iy = grid_sampler_unnormalize(y, inp_H, align_corners);
++
++                        float ix_nw = std::floor(ix);
++                        float iy_nw = std::floor(iy);
++
++                        const float tx = ix - ix_nw;
++                        const float ty = iy - iy_nw;
++
++                        const float *inp_ptr_NC = inp_ptr_N;
++                        float *out_ptr_NCHW = out_ptr + n * out_sN + h * out_sH + w * out_sW;
++                        for (int64_t c = 0; c < C;
++                            ++c, out_ptr_NCHW += out_sC, inp_ptr_NC += inp_sC) {
++                            float coefficients[4];
++
++                            // Interpolate 4 values in the x direction
++                            for (int64_t i = 0; i < 4; ++i) {
++                            coefficients[i] = cubic_interp1d<float>(
++                                get_value_bounded<float>(inp_ptr_NC, ix_nw - 1, iy_nw - 1 + i,
++                                                        inp_W, inp_H, inp_sW, inp_sH,
++                                                        padding_mode, align_corners),
++                                get_value_bounded<float>(inp_ptr_NC, ix_nw + 0, iy_nw - 1 + i,
++                                                        inp_W, inp_H, inp_sW, inp_sH,
++                                                        padding_mode, align_corners),
++                                get_value_bounded<float>(inp_ptr_NC, ix_nw + 1, iy_nw - 1 + i,
++                                                        inp_W, inp_H, inp_sW, inp_sH,
++                                                        padding_mode, align_corners),
++                                get_value_bounded<float>(inp_ptr_NC, ix_nw + 2, iy_nw - 1 + i,
++                                                        inp_W, inp_H, inp_sW, inp_sH,
++                                                        padding_mode, align_corners),
++                                tx);
++                            }
++
++                            // Interpolate in the y direction
++                            *out_ptr_NCHW =
++                                cubic_interp1d<float>(coefficients[0], coefficients[1],
++                                                    coefficients[2], coefficients[3], ty);
++                    }
++                }
++            }
++        }
++    }
++}
++
++
++void flow_warp_int8(const int8_t*input_data,std::vector<size_t> input_dim,int8_t*flow_data,std::vector<size_t> flow_dim,int8_t*out_ptr){
++    int8_t N = input_dim[0];
++    int8_t C = input_dim[1];
++    int8_t inp_H =input_dim[2];
++    int8_t inp_W = input_dim[3];
++    int8_t out_H =flow_dim[1];
++    int8_t out_W = flow_dim[2];
++
++
++      // flow warp prehead
++    if(inp_H != out_H || inp_W != out_W){
++        std::cout << "The spatial sizes of input ("<<inp_H<<","<<inp_W<<")"<<" and flow ("<<out_H<<","<<out_W<<") are not the same."<<std::endl;
++        return ;
++    }
++
++    int8_t flow_sN = flow_dim[1] * flow_dim[2] * flow_dim[3];//flow_dims[1] * flow_dims[2] * flow_dims[3];
++    int8_t flow_sH = flow_dim[2] * flow_dim[3];//flow_dims[2] * flow_dims[3];
++    int8_t flow_sW = flow_dim[3]; //flow_dims[3];
++    int8_t flow_sCoor = 1;
++    
++    for (int8_t n = 0; n < N; ++n) {
++        int8_t *flow_ptr_N = flow_data + n * flow_sN;
++        for (int8_t h = 0; h < out_H; ++h) {
++        for (int8_t w = 0; w < out_W; ++w) {
++            int8_t *flow_ptr_NHW = flow_ptr_N + h * flow_sH + w * flow_sW;
++            int8_t * flow_ptr_NHW_x = flow_ptr_NHW;
++            int8_t * flow_ptr_NHW_y = &flow_ptr_NHW[flow_sCoor]; // flow_ptr_NHW + flow_sCoor;
++            *flow_ptr_NHW_x = 2.0 * (*flow_ptr_NHW_x + w) / MAX(out_W - 1, 1) - 1.0;
++            *flow_ptr_NHW_y = 2.0 *(*flow_ptr_NHW_y + h) / MAX(out_H - 1, 1) - 1.0;
++        }
++        }
++    }
++    const int8_t * grid_data = flow_data;
++
++    // bilinear grid sample
++    const bool align_corners = true;
++    const int8_t padding_mode = 0;  // padding_mode: zeros
++    const int8_t interpolation_mode = 0; // interpolation_mode: bilinear
++    
++    int8_t grid_H = flow_dim[1],grid_W = flow_dim[2],grid_C = flow_dim[3];
++    int8_t out_C = C;
++    int8_t inp_sN = C * inp_H * inp_W;//input_dims[1] * input_dims[2] * input_dims[3];
++    int8_t inp_sC = inp_H * inp_W;//input_dims[2] * input_dims[3];
++    int8_t inp_sH = inp_W;//input_dims[3];
++    int8_t inp_sW = 1;
++    int8_t grid_sN = grid_H * grid_W * grid_C;//grid_dims[1] * grid_dims[2] * grid_dims[3];
++    int8_t grid_sH = grid_W * grid_C;//grid_dims[2] * grid_dims[3];
++    int8_t grid_sW = grid_C;//grid_dims[3];
++    int8_t grid_sCoor = 1;
++    int8_t out_sN = out_C * out_H * out_W;//output_dims[1] * output_dims[2] * output_dims[3];
++    int8_t out_sC = out_H * out_W;//output_dims[2] * output_dims[3];
++    int8_t out_sH = out_W;//output_dims[3];
++    int8_t out_sW = 1;
++
++    // loop over each output pixel
++    for (int8_t n = 0; n < N; ++n) {
++        const int8_t *grid_ptr_N = grid_data + n * grid_sN;
++        const int8_t *inp_ptr_N = input_data + n * inp_sN;
++        for (int8_t h = 0; h < out_H; ++h) {
++            for (int8_t w = 0; w < out_W; ++w) {
++                const int8_t *grid_ptr_NHW = grid_ptr_N + h * grid_sH + w * grid_sW;
++                int8_t x = *grid_ptr_NHW;
++                int8_t y = grid_ptr_NHW[grid_sCoor];
++
++                int8_t ix = grid_sampler_compute_source_index(x, inp_W, padding_mode,
++                                                            align_corners);
++                int8_t iy = grid_sampler_compute_source_index(y, inp_H, padding_mode,
++                                                            align_corners);
++
++                if (interpolation_mode == GridSamplerInterpolation::Bilinear) {
++                    // get corner pixel values from (x, y)
++                    // for 4d, we use north-east-south-west
++                    int8_t ix_nw = static_cast<int64_t>(std::floor(ix));
++                    int8_t iy_nw = static_cast<int64_t>(std::floor(iy));
++
++                    int8_t ix_ne = ix_nw + 1;
++                    int8_t iy_ne = iy_nw;
++
++                    int8_t ix_sw = ix_nw;
++                    int8_t iy_sw = iy_nw + 1;
++
++                    int8_t ix_se = ix_nw + 1;
++                    int8_t iy_se = iy_nw + 1;
++
++                    // get surfaces to each neighbor:
++                    int8_t nw = (ix_se - ix) * (iy_se - iy);
++                    int8_t ne = (ix - ix_sw) * (iy_sw - iy);
++                    int8_t sw = (ix_ne - ix) * (iy - iy_ne);
++                    int8_t se = (ix - ix_nw) * (iy - iy_nw);
++
++                    // calculate bilinear weighted pixel value and set output pixel
++                    const int8_t *inp_ptr_NC = inp_ptr_N;
++                    int8_t *out_ptr_NCHW = out_ptr + n * out_sN + h * out_sH + w * out_sW;
++                    for (int8_t c = 0; c < C; ++c, out_ptr_NCHW += out_sC, inp_ptr_NC += inp_sC) {
++                        auto res = static_cast<int8_t>(0);
++                        if (within_bounds_2d(iy_nw, ix_nw, inp_H, inp_W)) {
++                            res += inp_ptr_NC[iy_nw * inp_sH + ix_nw * inp_sW] * nw;
++                        }
++                        if (within_bounds_2d(iy_ne, ix_ne, inp_H, inp_W)) {
++                            res += inp_ptr_NC[iy_ne * inp_sH + ix_ne * inp_sW] * ne;
++                        }
++                        if (within_bounds_2d(iy_sw, ix_sw, inp_H, inp_W)) {
++                            res += inp_ptr_NC[iy_sw * inp_sH + ix_sw * inp_sW] * sw;
++                        }
++                        if (within_bounds_2d(iy_se, ix_se, inp_H, inp_W)) {
++                            res += inp_ptr_NC[iy_se * inp_sH + ix_se * inp_sW] * se;
++                        }
++                        *out_ptr_NCHW = res;
++                    }
++                    } 
++                    else if (interpolation_mode == GridSamplerInterpolation::Nearest) {
++                        int8_t ix_nearest = static_cast<int8_t>(std::nearbyint(ix));
++                        int8_t iy_nearest = static_cast<int8_t>(std::nearbyint(iy));
++
++                        // assign nearest neighbor pixel value to output pixel
++                        int8_t *out_ptr_NCHW = out_ptr + n * out_sN + h * out_sH + w * out_sW;
++                        const int8_t *inp_ptr_NC = inp_ptr_N;
++                        for (int8_t c = 0; c < C;
++                            ++c, out_ptr_NCHW += out_sC, inp_ptr_NC += inp_sC) {
++                            if (within_bounds_2d(iy_nearest, ix_nearest, inp_H, inp_W)) {
++                            *out_ptr_NCHW =
++                                inp_ptr_NC[iy_nearest * inp_sH + ix_nearest * inp_sW];
++                            } else {
++                            *out_ptr_NCHW = static_cast<int8_t>(0);
++                            }
++                        }
++                        }
++                    else if (interpolation_mode == GridSamplerInterpolation::Bicubic) {
++                        // grid_sampler_compute_source_index will "clip the value" of idx
++                        // depends on the padding,
++                        // which would cause calculation to be wrong,
++                        // for example x = -0.1 -> ix = 0 for zero padding, but in bicubic ix
++                        // = floor(x) = -1
++                        // There would be more problem in reflection padding, since the -1 and
++                        // +1 direction is not fixed in boundary condition
++                        ix = grid_sampler_unnormalize(x, inp_W, align_corners);
++                        iy = grid_sampler_unnormalize(y, inp_H, align_corners);
++
++                        int8_t ix_nw = std::floor(ix);
++                        int8_t iy_nw = std::floor(iy);
++
++                        const int8_t tx = ix - ix_nw;
++                        const int8_t ty = iy - iy_nw;
++
++                        const int8_t *inp_ptr_NC = inp_ptr_N;
++                        int8_t *out_ptr_NCHW = out_ptr + n * out_sN + h * out_sH + w * out_sW;
++                        for (int8_t c = 0; c < C;
++                            ++c, out_ptr_NCHW += out_sC, inp_ptr_NC += inp_sC) {
++                            int8_t coefficients[4];
++
++                            // Interpolate 4 values in the x direction
++                            for (int8_t i = 0; i < 4; ++i) {
++                            coefficients[i] = cubic_interp1d<int8_t>(
++                                get_value_bounded<int8_t>(inp_ptr_NC, ix_nw - 1, iy_nw - 1 + i,
++                                                        inp_W, inp_H, inp_sW, inp_sH,
++                                                        padding_mode, align_corners),
++                                get_value_bounded<int8_t>(inp_ptr_NC, ix_nw + 0, iy_nw - 1 + i,
++                                                        inp_W, inp_H, inp_sW, inp_sH,
++                                                        padding_mode, align_corners),
++                                get_value_bounded<int8_t>(inp_ptr_NC, ix_nw + 1, iy_nw - 1 + i,
++                                                        inp_W, inp_H, inp_sW, inp_sH,
++                                                        padding_mode, align_corners),
++                                get_value_bounded<int8_t>(inp_ptr_NC, ix_nw + 2, iy_nw - 1 + i,
++                                                        inp_W, inp_H, inp_sW, inp_sH,
++                                                        padding_mode, align_corners),
++                                tx);
++                            }
++
++                            // Interpolate in the y direction
++                            *out_ptr_NCHW =
++                                cubic_interp1d<int8_t>(coefficients[0], coefficients[1],
++                                                    coefficients[2], coefficients[3], ty);
++                    }
++                }
++            }
++        }
++    }
++}
++
++void flow_warp_uint8(const uint8_t*input_data,std::vector<size_t> input_dim,uint8_t*flow_data,std::vector<size_t> flow_dim,uint8_t*out_ptr){
++    uint8_t N = input_dim[0];
++    uint8_t C = input_dim[1];
++    uint8_t inp_H =input_dim[2];
++    uint8_t inp_W = input_dim[3];
++    uint8_t out_H =flow_dim[1];
++    uint8_t out_W = flow_dim[2];
++
++      // flow warp prehead
++    if(inp_H != out_H || inp_W != out_W){
++        std::cout << "The spatial sizes of input ("<<inp_H<<","<<inp_W<<")"<<" and flow ("<<out_H<<","<<out_W<<") are not the same."<<std::endl;
++        return ;
++    }
++
++    uint8_t flow_sN = flow_dim[1] * flow_dim[2] * flow_dim[3];//flow_dims[1] * flow_dims[2] * flow_dims[3];
++    uint8_t flow_sH = flow_dim[2] * flow_dim[3];//flow_dims[2] * flow_dims[3];
++    uint8_t flow_sW = flow_dim[3]; //flow_dims[3];
++    uint8_t flow_sCoor = 1;
++    
++    for (uint8_t n = 0; n < N; ++n) {
++        uint8_t *flow_ptr_N = flow_data + n * flow_sN;
++        for (uint8_t h = 0; h < out_H; ++h) {
++        for (uint8_t w = 0; w < out_W; ++w) {
++            uint8_t *flow_ptr_NHW = flow_ptr_N + h * flow_sH + w * flow_sW;
++            uint8_t * flow_ptr_NHW_x = flow_ptr_NHW;
++            uint8_t * flow_ptr_NHW_y = &flow_ptr_NHW[flow_sCoor]; // flow_ptr_NHW + flow_sCoor;
++            *flow_ptr_NHW_x = 2.0 * (*flow_ptr_NHW_x + w) / MAX(out_W - 1, 1) - 1.0;
++            *flow_ptr_NHW_y = 2.0 *(*flow_ptr_NHW_y + h) / MAX(out_H - 1, 1) - 1.0;
++        }
++        }
++    }
++    const uint8_t * grid_data = flow_data;
++
++    // bilinear grid sample
++    const bool align_corners = true;
++    const uint8_t padding_mode = 0;  // padding_mode: zeros
++    const uint8_t interpolation_mode = 0; // interpolation_mode: bilinear
++    
++    uint8_t grid_H = flow_dim[1],grid_W = flow_dim[2],grid_C = flow_dim[3];
++    uint8_t out_C = C;
++    uint8_t inp_sN = C * inp_H * inp_W;//input_dims[1] * input_dims[2] * input_dims[3];
++    uint8_t inp_sC = inp_H * inp_W;//input_dims[2] * input_dims[3];
++    uint8_t inp_sH = inp_W;//input_dims[3];
++    uint8_t inp_sW = 1;
++    uint8_t grid_sN = grid_H * grid_W * grid_C;//grid_dims[1] * grid_dims[2] * grid_dims[3];
++    uint8_t grid_sH = grid_W * grid_C;//grid_dims[2] * grid_dims[3];
++    uint8_t grid_sW = grid_C;//grid_dims[3];
++    uint8_t grid_sCoor = 1;
++    uint8_t out_sN = out_C * out_H * out_W;//output_dims[1] * output_dims[2] * output_dims[3];
++    uint8_t out_sC = out_H * out_W;//output_dims[2] * output_dims[3];
++    uint8_t out_sH = out_W;//output_dims[3];
++    uint8_t out_sW = 1;
++
++    // loop over each output pixel
++    for (uint8_t n = 0; n < N; ++n) {
++        const uint8_t *grid_ptr_N = grid_data + n * grid_sN;
++        const uint8_t *inp_ptr_N = input_data + n * inp_sN;
++        for (uint8_t h = 0; h < out_H; ++h) {
++            for (uint8_t w = 0; w < out_W; ++w) {
++                const uint8_t *grid_ptr_NHW = grid_ptr_N + h * grid_sH + w * grid_sW;
++                uint8_t x = *grid_ptr_NHW;
++                uint8_t y = grid_ptr_NHW[grid_sCoor];
++
++                uint8_t ix = grid_sampler_compute_source_index(x, inp_W, padding_mode,
++                                                            align_corners);
++                uint8_t iy = grid_sampler_compute_source_index(y, inp_H, padding_mode,
++                                                            align_corners);
++
++                if (interpolation_mode == GridSamplerInterpolation::Bilinear) {
++                    // get corner pixel values from (x, y)
++                    // for 4d, we use north-east-south-west
++                    uint8_t ix_nw = static_cast<uint8_t>(std::floor(ix));
++                    uint8_t iy_nw = static_cast<uint8_t>(std::floor(iy));
++
++                    uint8_t ix_ne = ix_nw + 1;
++                    uint8_t iy_ne = iy_nw;
++
++                    uint8_t ix_sw = ix_nw;
++                    uint8_t iy_sw = iy_nw + 1;
++
++                    uint8_t ix_se = ix_nw + 1;
++                    uint8_t iy_se = iy_nw + 1;
++
++                    // get surfaces to each neighbor:
++                    uint8_t nw = (ix_se - ix) * (iy_se - iy);
++                    uint8_t ne = (ix - ix_sw) * (iy_sw - iy);
++                    uint8_t sw = (ix_ne - ix) * (iy - iy_ne);
++                    uint8_t se = (ix - ix_nw) * (iy - iy_nw);
++
++                    // calculate bilinear weighted pixel value and set output pixel
++                    const uint8_t *inp_ptr_NC = inp_ptr_N;
++                    uint8_t *out_ptr_NCHW = out_ptr + n * out_sN + h * out_sH + w * out_sW;
++                    for (uint8_t c = 0; c < C; ++c, out_ptr_NCHW += out_sC, inp_ptr_NC += inp_sC) {
++                        auto res = static_cast<uint8_t>(0);
++                        if (within_bounds_2d(iy_nw, ix_nw, inp_H, inp_W)) {
++                            res += inp_ptr_NC[iy_nw * inp_sH + ix_nw * inp_sW] * nw;
++                        }
++                        if (within_bounds_2d(iy_ne, ix_ne, inp_H, inp_W)) {
++                            res += inp_ptr_NC[iy_ne * inp_sH + ix_ne * inp_sW] * ne;
++                        }
++                        if (within_bounds_2d(iy_sw, ix_sw, inp_H, inp_W)) {
++                            res += inp_ptr_NC[iy_sw * inp_sH + ix_sw * inp_sW] * sw;
++                        }
++                        if (within_bounds_2d(iy_se, ix_se, inp_H, inp_W)) {
++                            res += inp_ptr_NC[iy_se * inp_sH + ix_se * inp_sW] * se;
++                        }
++                        *out_ptr_NCHW = res;
++                    }
++                    } 
++                    else if (interpolation_mode == GridSamplerInterpolation::Nearest) {
++                        uint8_t ix_nearest = static_cast<int64_t>(std::nearbyint(ix));
++                        uint8_t iy_nearest = static_cast<int64_t>(std::nearbyint(iy));
++
++                        // assign nearest neighbor pixel value to output pixel
++                        uint8_t *out_ptr_NCHW = out_ptr + n * out_sN + h * out_sH + w * out_sW;
++                        const uint8_t *inp_ptr_NC = inp_ptr_N;
++                        for (uint8_t c = 0; c < C;
++                            ++c, out_ptr_NCHW += out_sC, inp_ptr_NC += inp_sC) {
++                            if (within_bounds_2d(iy_nearest, ix_nearest, inp_H, inp_W)) {
++                            *out_ptr_NCHW =
++                                inp_ptr_NC[iy_nearest * inp_sH + ix_nearest * inp_sW];
++                            } else {
++                            *out_ptr_NCHW = static_cast<uint8_t>(0);
++                            }
++                        }
++                        }
++                    else if (interpolation_mode == GridSamplerInterpolation::Bicubic) {
++                        // grid_sampler_compute_source_index will "clip the value" of idx
++                        // depends on the padding,
++                        // which would cause calculation to be wrong,
++                        // for example x = -0.1 -> ix = 0 for zero padding, but in bicubic ix
++                        // = floor(x) = -1
++                        // There would be more problem in reflection padding, since the -1 and
++                        // +1 direction is not fixed in boundary condition
++                        ix = grid_sampler_unnormalize(x, inp_W, align_corners);
++                        iy = grid_sampler_unnormalize(y, inp_H, align_corners);
++
++                        uint8_t ix_nw = std::floor(ix);
++                        uint8_t iy_nw = std::floor(iy);
++
++                        const uint8_t tx = ix - ix_nw;
++                        const uint8_t ty = iy - iy_nw;
++
++                        const uint8_t *inp_ptr_NC = inp_ptr_N;
++                        uint8_t *out_ptr_NCHW = out_ptr + n * out_sN + h * out_sH + w * out_sW;
++                        for (uint8_t c = 0; c < C;
++                            ++c, out_ptr_NCHW += out_sC, inp_ptr_NC += inp_sC) {
++                            uint8_t coefficients[4];
++
++                            // Interpolate 4 values in the x direction
++                            for (uint8_t i = 0; i < 4; ++i) {
++                            coefficients[i] = cubic_interp1d<uint8_t>(
++                                get_value_bounded<uint8_t>(inp_ptr_NC, ix_nw - 1, iy_nw - 1 + i,
++                                                        inp_W, inp_H, inp_sW, inp_sH,
++                                                        padding_mode, align_corners),
++                                get_value_bounded<uint8_t>(inp_ptr_NC, ix_nw + 0, iy_nw - 1 + i,
++                                                        inp_W, inp_H, inp_sW, inp_sH,
++                                                        padding_mode, align_corners),
++                                get_value_bounded<uint8_t>(inp_ptr_NC, ix_nw + 1, iy_nw - 1 + i,
++                                                        inp_W, inp_H, inp_sW, inp_sH,
++                                                        padding_mode, align_corners),
++                                get_value_bounded<uint8_t>(inp_ptr_NC, ix_nw + 2, iy_nw - 1 + i,
++                                                        inp_W, inp_H, inp_sW, inp_sH,
++                                                        padding_mode, align_corners),
++                                tx);
++                            }
++
++                            // Interpolate in the y direction
++                            *out_ptr_NCHW =
++                                cubic_interp1d<uint8_t>(coefficients[0], coefficients[1],
++                                                    coefficients[2], coefficients[3], ty);
++                    }
++                }
++            }
++        }
++    }
++}
++
+diff --git a/docs/template_extension/custom_op/flow_warp.h b/docs/template_extension/custom_op/flow_warp.h
+new file mode 100644
+index 0000000000..0b09de521e
+--- /dev/null
++++ b/docs/template_extension/custom_op/flow_warp.h
+@@ -0,0 +1,5 @@
++extern "C"{
++    void flow_warp(const float*input_data,std::vector<size_t> input_dim,float*flow_data,std::vector<size_t> flow_dim,float*output_ptr);
++    void flow_warp_int8(const int8_t*input_data,std::vector<size_t> input_dim,int8_t*flow_data,std::vector<size_t> flow_dim,int8_t*out_ptr);
++    void flow_warp_uint8(const uint8_t*input_data,std::vector<size_t> input_dim,uint8_t*flow_data,std::vector<size_t> flow_dim,uint8_t*out_ptr);
++}
+\ No newline at end of file
+diff --git a/docs/template_extension/custom_op/flow_warp_custom_op.cpp b/docs/template_extension/custom_op/flow_warp_custom_op.cpp
+new file mode 100644
+index 0000000000..59b15d4d8d
+--- /dev/null
++++ b/docs/template_extension/custom_op/flow_warp_custom_op.cpp
+@@ -0,0 +1,75 @@
++// Copyright (C) 2018-2022 Intel Corporation
++// SPDX-License-Identifier: Apache-2.0
++//
++
++#include "flow_warp_custom_op.h"
++#include "flow_warp.h"
++using namespace CustomExtension;
++
++//! [op:ctor]
++FlowWarp::FlowWarp(const ov::Output<ov::Node>& input,const ov::Output<ov::Node>& flow) : Op({input,flow}) {
++    constructor_validate_and_infer_types();
++}
++//! [op:ctor]
++
++//! [op:validate]
++void FlowWarp::validate_and_infer_types() {
++    // Operation doesn't change shapes end element type
++    set_output_type(0, get_input_element_type(0), get_input_partial_shape(0));
++}
++//! [op:validate]
++
++//! [op:copy]
++std::shared_ptr<ov::Node> FlowWarp::clone_with_new_inputs(const ov::OutputVector& new_args) const {
++    OPENVINO_ASSERT(new_args.size() == 2, "Incorrect number of new arguments");
++
++    return std::make_shared<FlowWarp>(new_args.at(0),new_args.at(1));
++}
++//! [op:copy]
++
++//! [op:visit_attributes]
++bool FlowWarp::visit_attributes(ov::AttributeVisitor& visitor) {
++    return true;
++}
++//! [op:visit_attributes]
++
++//! [op:evaluate]
++bool FlowWarp::evaluate(ov::TensorVector& outputs, const ov::TensorVector& inputs) const {
++    auto in = inputs[0];
++    auto flow = inputs[1];
++    auto out = outputs[0];
++    ov::Tensor flow_new(flow);
++    ngraph::element::Type_t input_ty = get_input_element_type(0);
++    ngraph::element::Type_t flow_ty = get_input_element_type(1);
++    const float* input_ptr = in.data<float>();
++    float* flow_ptr = flow_new.data<float>();
++    float* output_ptr = out.data<float>();
++    switch (input_ty){
++        case ngraph::element::Type_t::i8:
++            flow_warp_int8(reinterpret_cast<const int8_t*>(input_ptr),in.get_shape(),reinterpret_cast<int8_t*>(flow_ptr),flow.get_shape(),reinterpret_cast<int8_t*>(output_ptr));
++            break;
++        case ngraph::element::Type_t::u8:
++            flow_warp_uint8(reinterpret_cast<const uint8_t*>(input_ptr),in.get_shape(),reinterpret_cast<uint8_t*>(flow_ptr),flow.get_shape(),reinterpret_cast<uint8_t*>(output_ptr));
++            break;
++        case ngraph::element::Type_t::f32:
++            flow_warp(input_ptr,in.get_shape(),flow_ptr,flow.get_shape(),output_ptr);
++            break;
++        default:
++            break;
++    }
++    return true;
++
++}
++
++bool FlowWarp::has_evaluate() const {
++    switch (get_input_element_type(0)) {
++    case ngraph::element::Type_t::i8:
++    case ngraph::element::Type_t::u8:
++    case ngraph::element::Type_t::f32:
++        return true;
++    default:
++        break;
++    }
++    return false;
++}
++//! [op:evaluate]
+diff --git a/docs/template_extension/custom_op/flow_warp_custom_op.h b/docs/template_extension/custom_op/flow_warp_custom_op.h
+new file mode 100644
+index 0000000000..279cb7335c
+--- /dev/null
++++ b/docs/template_extension/custom_op/flow_warp_custom_op.h
+@@ -0,0 +1,29 @@
++// Copyright (C) 2018-2022 Intel Corporation
++// SPDX-License-Identifier: Apache-2.0
++//
++
++#pragma once
++
++//! [op:common_include]
++#include <openvino/op/op.hpp>
++//! [op:common_include]
++
++//! [op:header]
++namespace CustomExtension {
++
++class FlowWarp : public ov::op::Op {
++public:
++    OPENVINO_OP("flow_warp");
++
++    FlowWarp() = default;
++    FlowWarp(const ov::Output<ov::Node>& input,const ov::Output<ov::Node>& flow);
++    void validate_and_infer_types() override;
++    std::shared_ptr<ov::Node> clone_with_new_inputs(const ov::OutputVector& new_args) const override;
++    bool visit_attributes(ov::AttributeVisitor& visitor) override;
++
++    bool evaluate(ov::TensorVector& outputs, const ov::TensorVector& inputs) const override;
++    bool has_evaluate() const override;
++};
++//! [op:header]
++
++}  // namespace TemplateExtension
+diff --git a/requirements.txt b/requirements.txt
+new file mode 100644
+index 0000000000..05f41acf6f
+--- /dev/null
++++ b/requirements.txt
+@@ -0,0 +1,2 @@
++cython
++
+diff --git a/src/plugins/intel_cpu/src/nodes/interpolate.cpp b/src/plugins/intel_cpu/src/nodes/interpolate.cpp
+index d772fa3276..798deae4c0 100644
+--- a/src/plugins/intel_cpu/src/nodes/interpolate.cpp
++++ b/src/plugins/intel_cpu/src/nodes/interpolate.cpp
+@@ -2622,12 +2622,12 @@ float MKLDNNInterpolateNode::InterpolateExecutor::coordTransToInput(int outCoord
+     }
+     switch (coordTransMode) {
+         case InterpolateCoordTransMode::half_pixel: {
+-            return (outCoord + 0.5f) / scale - 0.5f;
++            return (outCoord + 0.5f) * inShape / outShape - 0.5f;
+             break;
+         }
+         case InterpolateCoordTransMode::pytorch_half_pixel: {
+             if (outShape > 1)
+-                return (outCoord + 0.5f) / scale - 0.5f;
++                return (outCoord + 0.5f) * inShape/ outShape - 0.5f;
+             else
+                 return 0;
+             break;
+diff --git a/src/plugins/intel_cpu/thirdparty/onednn b/src/plugins/intel_cpu/thirdparty/onednn
+new file mode 160000
+index 0000000000..2a749c577f
+--- /dev/null
++++ b/src/plugins/intel_cpu/thirdparty/onednn
+@@ -0,0 +1 @@
++Subproject commit 2a749c577f8a841a396d4bd46eaf311b7e7dc089
+diff --git a/src/plugins/intel_gpu/include/intel_gpu/runtime/engine.hpp b/src/plugins/intel_gpu/include/intel_gpu/runtime/engine.hpp
+index 1177a4fd64..0de1a897d5 100644
+--- a/src/plugins/intel_gpu/include/intel_gpu/runtime/engine.hpp
++++ b/src/plugins/intel_gpu/include/intel_gpu/runtime/engine.hpp
+@@ -57,7 +57,7 @@ public:
+     virtual memory_ptr reinterpret_handle(const layout& new_layout, shared_mem_params params) = 0;
+ 
+     /// Created memory object from the other @p memory and reinterpred the data using specified @p new_layout
+-    virtual memory_ptr reinterpret_buffer(const memory& memory, const layout& new_layout) = 0;
++    virtual memory_ptr reinterpret_buffer(const memory& memory, const layout& new_layout, const size_t offset = 0) = 0;
+ 
+     /// Create shared memory object using user-supplied memory buffer @p buf using specified @p layout
+     memory_ptr share_buffer(const layout& layout, shared_handle buf);
+diff --git a/src/plugins/intel_gpu/include/intel_gpu/runtime/memory_pool.hpp b/src/plugins/intel_gpu/include/intel_gpu/runtime/memory_pool.hpp
+index 60d21b57b1..0bdc3042f0 100644
+--- a/src/plugins/intel_gpu/include/intel_gpu/runtime/memory_pool.hpp
++++ b/src/plugins/intel_gpu/include/intel_gpu/runtime/memory_pool.hpp
+@@ -29,12 +29,14 @@ using memory_ptr = std::shared_ptr<memory>;
+ struct memory_user {
+     primitive_id _id;
+     uint32_t _network_id;
++    size_t   _offset;
++    size_t   _size;
+ 
+-    memory_user(primitive_id id, uint32_t network_id)
+-        : _id(id), _network_id(network_id) {}
++    memory_user(primitive_id id, uint32_t network_id, size_t size, size_t offset = 0)
++        : _id(id), _network_id(network_id), _size(size), _offset(offset) {}
+ 
+     friend std::ostream& operator<<(std::ostream& os, const memory_user& memory_user) {
+-        os << memory_user._id << "(" << memory_user._network_id << ")";
++        os << memory_user._id << "(" << memory_user._network_id << ", offset:" << memory_user._offset <<")";
+         return os;
+     }
+ };
+@@ -91,7 +93,7 @@ class memory_pool {
+     memory_pool();
+ 
+     memory_ptr alloc_memory(const layout& layout, allocation_type type);
+-    static bool has_conflict(const memory_set&, const std::set<primitive_id>&, uint32_t network_id);
++    static std::vector<primitive_id> get_conflicts(const memory_set&, const std::set<primitive_id>&, uint32_t network_id);
+ 
+     std::multimap<uint64_t, memory_record> _non_padded_pool;
+     std::map<layout, std::list<memory_record>, padded_pool_comparer> _padded_pool;
+diff --git a/src/plugins/intel_gpu/src/graph/gather_elements.cpp b/src/plugins/intel_gpu/src/graph/gather_elements.cpp
+index aaa60a5545..817ea48ed9 100644
+--- a/src/plugins/intel_gpu/src/graph/gather_elements.cpp
++++ b/src/plugins/intel_gpu/src/graph/gather_elements.cpp
+@@ -28,7 +28,7 @@ layout gather_elements_inst::calc_output_layout(gather_elements_node const& node
+         input_layout_origin.data_type = node.get_fused_output_layout().data_type;
+     }
+ 
+-    auto output_type = indices_layout_origin.data_type;
++    auto output_type = input_layout_origin.data_type;
+     auto output_format = op->output_format;
+     auto output_shape = op->output_shape;
+ 
+diff --git a/src/plugins/intel_gpu/src/graph/primitive_inst.cpp b/src/plugins/intel_gpu/src/graph/primitive_inst.cpp
+index 16aaeaf0f9..76d6e87745 100644
+--- a/src/plugins/intel_gpu/src/graph/primitive_inst.cpp
++++ b/src/plugins/intel_gpu/src/graph/primitive_inst.cpp
+@@ -162,6 +162,16 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
+             CLDNN_ERROR_MESSAGE(id, temp);
+         }
+     }
++
++#if 0
++    //add memset for padded buffer to remove some reorder and border options
++    auto out_layout = output_memory_ptr()->get_layout();
++    if(output_memory_ptr()->is_memory_reset_needed(out_layout)) {
++        std::cout << "[DEBUG/MEMSET]" << id() << std::endl;
++        auto ev = output_memory_ptr()->fill(this->get_network().get_stream());
++        dependencies.emplace_back(ev);
++    }
++#endif
+     return _impl->execute(dependencies, *this);
+ }
+ 
+@@ -288,7 +298,7 @@ memory::ptr primitive_inst::allocate_output(engine& _engine, memory_pool& pool,
+ 
+     GPU_DEBUG_GET_INSTANCE(debug_config);
+     const auto& lockable_mem_type = _engine.get_lockable_preffered_memory_allocation_type(layout.format.is_image_2d());
+-    const auto& alloc_type = use_lockable_memory ? lockable_mem_type
++    auto alloc_type = use_lockable_memory ? lockable_mem_type
+         : usm_device_allocatable ? allocation_type::usm_device : lockable_mem_type;
+ 
+     if (is_internal && (_node.can_be_optimized() || _node.is_type<generic_layer>())) {
+@@ -318,14 +328,29 @@ memory::ptr primitive_inst::allocate_output(engine& _engine, memory_pool& pool,
+         GPU_DEBUG_IF(debug_config->verbose >= 2) {
+             GPU_DEBUG_COUT << "[" << _node.id() << ": output]" << std::endl;
+         }
++        auto allocated_memory = _engine.get_used_device_memory(alloc_type);
++        if (alloc_type == allocation_type::usm_device &&
++            allocated_memory + layout.bytes_count() > _engine.get_device_info().max_global_mem_size) {
++            alloc_type = allocation_type::usm_host;
++         }
+         return _engine.allocate_memory(layout, alloc_type);
+     } else {
+-        return get_memory_from_pool(_engine,
++        auto mem = get_memory_from_pool(_engine,
+                 layout,
+                 _node.id(),
+                 _node.get_memory_dependencies(),
+                 alloc_type,
+                 true);
++        if (mem == nullptr) {
++            auto changed_alloc_type = allocation_type::usm_host;
++            mem = get_memory_from_pool(_engine,
++                layout,
++                _node.id(),
++                _node.get_memory_dependencies(),
++                changed_alloc_type,
++                true);
++        }
++        return mem;
+     }
+ }
+ memory::ptr primitive_inst::allocate_output() {
+diff --git a/src/plugins/intel_gpu/src/graph/program.cpp b/src/plugins/intel_gpu/src/graph/program.cpp
+index e9fdcca189..765adc062d 100644
+--- a/src/plugins/intel_gpu/src/graph/program.cpp
++++ b/src/plugins/intel_gpu/src/graph/program.cpp
+@@ -483,7 +483,8 @@ void program::pre_optimize_graph(bool is_internal) {
+     // handle symmetric and asymmetric padding for input
+     apply_opt_pass<handle_input_padding>();
+ 
+-    processing_order.calculate_BFS_processing_order();  // this method makes sense only for OOOQ (out of order execution queue)
++    if (get_engine().configuration().queue_type == cldnn::queue_types::out_of_order)
++        processing_order.calculate_BFS_processing_order();  // this method makes sense only for OOOQ (out of order execution queue)
+ 
+     apply_opt_pass<reverse_optional_nodes_outputs>();
+ 
+@@ -693,7 +694,8 @@ void program::prepare_memory_dependencies() {
+ 
+     apply_opt_pass<basic_memory_dependencies>();
+     apply_opt_pass<skipped_branch_memory_dependencies>();
+-    apply_opt_pass<oooq_memory_dependencies>();
++    if(get_engine().configuration().queue_type == cldnn::queue_types::out_of_order)
++        apply_opt_pass<oooq_memory_dependencies>();
+ }
+ 
+ std::string program::get_memory_dependencies_string() const {
+diff --git a/src/plugins/intel_gpu/src/kernel_selector/core/actual_kernels/concatenation/concatenation_kernel_simple_ref.cpp b/src/plugins/intel_gpu/src/kernel_selector/core/actual_kernels/concatenation/concatenation_kernel_simple_ref.cpp
+index 75202d97ff..f359293519 100644
+--- a/src/plugins/intel_gpu/src/kernel_selector/core/actual_kernels/concatenation/concatenation_kernel_simple_ref.cpp
++++ b/src/plugins/intel_gpu/src/kernel_selector/core/actual_kernels/concatenation/concatenation_kernel_simple_ref.cpp
+@@ -36,6 +36,7 @@ ParamsKey ConcatenationKernel_simple_Ref::GetSupportedKey() const {
+     k.EnableOutputLayout(DataLayout::bfwzyx);
+     k.EnableInputLayout(DataLayout::b_fs_zyx_fsv16);
+     k.EnableOutputLayout(DataLayout::b_fs_zyx_fsv16);
++    k.EnableOutputLayout(DataLayout::b_fs_yx_fsv16);
+     k.EnableInputLayout(DataLayout::bs_fs_zyx_bsv16_fsv16);
+     k.EnableOutputLayout(DataLayout::bs_fs_zyx_bsv16_fsv16);
+     k.EnableInputLayout(DataLayout::bs_fs_yx_bsv16_fsv16);
+@@ -83,14 +84,14 @@ ConcatenationKernelBase::DispatchData ConcatenationKernel_simple_Ref::SetDefault
+     DispatchData dispatchData;
+     const auto& input = params.inputs[0];
+ 
+-    dispatchData.gws = { input.X().v * input.Y().v,
+-                         input.Z().v * input.W().v,
++    dispatchData.gws = { input.X().v * input.Z().v,
++                         input.Y().v * input.W().v,
+                          input.Feature().v * input.Batch().v };
+ 
+     auto in_layout = params.inputs[0].GetLayout();
+     auto out_layout = params.output.GetLayout();
+-    std::vector<std::vector<Tensor::DataChannelName>> dims_by_gws = {{ Tensor::DataChannelName::X, Tensor::DataChannelName::Y },
+-                                                                     { Tensor::DataChannelName::Z, Tensor::DataChannelName::W },
++    std::vector<std::vector<Tensor::DataChannelName>> dims_by_gws = {{ Tensor::DataChannelName::X, Tensor::DataChannelName::Z },
++                                                                     { Tensor::DataChannelName::Y, Tensor::DataChannelName::W },
+                                                                      { Tensor::DataChannelName::FEATURE, Tensor::DataChannelName::BATCH }};
+ 
+     dispatchData.lws = GetOptimalLocalWorkGroupSizes(dispatchData.gws, params.engineInfo, in_layout, out_layout, dims_by_gws);
+diff --git a/src/plugins/intel_gpu/src/kernel_selector/core/actual_kernels/gather/gather_elements_kernel_ref.cpp b/src/plugins/intel_gpu/src/kernel_selector/core/actual_kernels/gather/gather_elements_kernel_ref.cpp
+index d4769ad4d7..882b7b5d20 100644
+--- a/src/plugins/intel_gpu/src/kernel_selector/core/actual_kernels/gather/gather_elements_kernel_ref.cpp
++++ b/src/plugins/intel_gpu/src/kernel_selector/core/actual_kernels/gather/gather_elements_kernel_ref.cpp
+@@ -41,6 +41,8 @@ ParamsKey GatherElementsKernelRef::GetSupportedKey() const {
+     k.EnableOutputDataType(Datatype::F16);
+     k.EnableOutputDataType(Datatype::F32);
+     k.EnableOutputDataType(Datatype::INT32);
++    k.EnableOutputDataType(Datatype::INT8);
++    k.EnableOutputDataType(Datatype::UINT8);
+     k.EnableInputLayout(DataLayout::bfyx);
+     k.EnableOutputLayout(DataLayout::bfyx);
+     k.EnableInputLayout(DataLayout::bfzyx);
+diff --git a/src/plugins/intel_gpu/src/kernel_selector/core/cl_kernels/concatenation_gpu_simple_ref.cl b/src/plugins/intel_gpu/src/kernel_selector/core/cl_kernels/concatenation_gpu_simple_ref.cl
+index 37f3a6b193..17de40c33c 100644
+--- a/src/plugins/intel_gpu/src/kernel_selector/core/cl_kernels/concatenation_gpu_simple_ref.cl
++++ b/src/plugins/intel_gpu/src/kernel_selector/core/cl_kernels/concatenation_gpu_simple_ref.cl
+@@ -5,6 +5,8 @@
+ #include "include/batch_headers/data_types.cl"
+ #include "include/batch_headers/fetch_data.cl"
+ 
++#pragma OPENCL EXTENSION cl_intel_printf : enable
++
+ ///////////////////////// Input Index /////////////////////////
+ inline uint FUNC(get_input_index)(uint b, uint f, uint w, uint z, uint y, uint x)
+ {
+@@ -36,6 +38,8 @@ inline uint FUNC(get_output_index)(uint b, uint f, uint w, uint z, uint y, uint
+     return GET_DATA_INDEX_5D(OUTPUT, b, f, z, y, x);
+ #elif OUTPUT_SIMPLE && OUTPUT_DIMS == 6
+     return GET_DATA_INDEX_6D(OUTPUT, b, f, w, z, y, x);
++#elif OUTPUT_LAYOUT_B_FS_YX_FSV16
++    return GET_DATA_B_FS_YX_FSV16_INDEX(OUTPUT, b, f, y, x);
+ #elif OUTPUT_LAYOUT_B_FS_ZYX_FSV16
+     return GET_DATA_B_FS_ZYX_FSV16_INDEX(OUTPUT, b, f, z, y, x);
+ #elif OUTPUT_LAYOUT_BS_FS_ZYX_BSV16_FSV16
+@@ -52,12 +56,29 @@ inline uint FUNC(get_output_index)(uint b, uint f, uint w, uint z, uint y, uint
+ 
+ KERNEL (concatenation_gpu_ref)(__global INPUT0_TYPE* input, __global OUTPUT_TYPE* output, uint output_offset_in_concat_axis)
+ {
++#if INPUT0_SIZE_Z == 1
++    const uint x = get_global_id(0);
++    const uint z = 0;
++#else
+     const uint x = (uint)get_global_id(0) % INPUT0_SIZE_X;
+-    const uint y = (uint)get_global_id(0) / INPUT0_SIZE_X;
+-    const uint z = (uint)get_global_id(1) % INPUT0_SIZE_Z;
+-    const uint w = (uint)get_global_id(1) / INPUT0_SIZE_Z;
++    const uint z = (uint)get_global_id(0) / INPUT0_SIZE_X;
++#endif
++
++#if INPUT0_SIZE_W == 1
++    const uint y = get_global_id(1);
++    const uint w = 0;
++#else
++    const uint y = (uint)get_global_id(1) % INPUT0_SIZE_Y;
++    const uint w = (uint)get_global_id(1) / INPUT0_SIZE_Y;
++#endif
++
++#if INPUT0_BATCH_NUM == 1
++    const uint f = get_global_id(2);
++    const uint b = 0;
++#else
+     const uint f = (uint)get_global_id(2) % INPUT0_FEATURE_NUM;
+     const uint b = (uint)get_global_id(2) / INPUT0_FEATURE_NUM;
++#endif
+ 
+     uint out_x = x;
+     uint out_y = y;
+diff --git a/src/plugins/intel_gpu/src/runtime/memory_pool.cpp b/src/plugins/intel_gpu/src/runtime/memory_pool.cpp
+index b4f0199024..7bd23b31ad 100644
+--- a/src/plugins/intel_gpu/src/runtime/memory_pool.cpp
++++ b/src/plugins/intel_gpu/src/runtime/memory_pool.cpp
+@@ -30,7 +30,7 @@ memory::ptr memory_pool::alloc_memory(const layout& layout, allocation_type type
+ 
+ memory_pool::~memory_pool() {}
+ 
+-bool memory_pool::has_conflict(const memory_set& a,
++std::vector<primitive_id> memory_pool::get_conflicts(const memory_set& a,
+                                const std::set<primitive_id>& b,
+                                uint32_t b_network_id) {
+     std::set<primitive_id> a_same_network;
+@@ -46,7 +46,7 @@ bool memory_pool::has_conflict(const memory_set& a,
+                      b.begin(),
+                      b.end(),
+                      std::back_inserter(intersection));
+-    return !intersection.empty();
++    return intersection;
+ }
+ 
+ void memory_pool::release_memory(memory* mem, const primitive_id& id, uint32_t network_id) {
+@@ -62,7 +62,11 @@ void memory_pool::release_memory(memory* mem, const primitive_id& id, uint32_t n
+             if (it->second._network_id == network_id &&
+                 it->second._type == type &&
+                 it->second._memory.get() == mem) {
+-                auto user_it = it->second._users.find({ id, network_id });
++                auto user_it = it->second._users.begin();
++                for (; user_it != it->second._users.end(); user_it ++) {
++                    if (user_it->_id == id && user_it->_network_id == network_id)
++                        break;
++                }
+ 
+                 // normally there should be only one entry
+                 if (user_it != it->second._users.end()) {
+@@ -91,7 +95,11 @@ void memory_pool::release_memory(memory* mem, const primitive_id& id, uint32_t n
+                 if (list_itr->_memory.get() == mem &&
+                     list_itr->_network_id == network_id &&
+                     list_itr->_type == type) {
+-                    auto user_it = list_itr->_users.find({ id, network_id });
++                    auto user_it = list_itr->_users.begin();
++                    for (; user_it != list_itr->_users.end(); user_it ++) {
++                        if (user_it->_id == id && user_it->_network_id == network_id)
++                            break;
++                    }
+ 
+                     // normally there should be only one entry
+                     if (user_it != list_itr->_users.end()) {
+@@ -121,31 +129,105 @@ memory::ptr memory_pool::get_from_non_padded_pool(const layout& layout,
+                                                   uint32_t network_id,
+                                                   const std::set<primitive_id>& restrictions,
+                                                   allocation_type type) {
++    GPU_DEBUG_GET_INSTANCE(debug_config);
+     auto it = _non_padded_pool.lower_bound(layout.bytes_count());
+     while (it != _non_padded_pool.end()) {
+-        if (it->second._network_id == network_id &&
+-            it->second._type == type &&
+-            it->second._memory->get_layout().format != format::fs_b_yx_fsv32 &&
+-            layout.format != format::fs_b_yx_fsv32 &&
+-            ((layout.format != format::b_fs_yx_fsv32 && layout.format != format::b_fs_zyx_fsv32) ||
+-             (layout.size.feature[0] % 32 == 0)) &&
+-            !has_conflict(it->second._users, restrictions, network_id)) {
+-            it->second._users.insert(memory_user(id, network_id));
++        auto conflicts = get_conflicts(it->second._users, restrictions, network_id);
++        bool may_reuse = (it->second._network_id == network_id) && it->second._type == type &&
++                            it->second._memory->get_layout().format != format::fs_b_yx_fsv32 &&
++                            layout.format != format::fs_b_yx_fsv32 &&
++                            ((layout.format != format::b_fs_yx_fsv32 && layout.format != format::b_fs_zyx_fsv32) ||
++                            (layout.size.feature[0] % 32 == 0));
++
++        if (may_reuse && conflicts.empty()) {//no conflict, reuse directly
++            GPU_DEBUG_IF(debug_config->verbose >= 2) {
++                if (type == allocation_type::usm_device) {
++                    GPU_DEBUG_COUT << id << "(" << layout.bytes_count() << ")" << "reuse memory (" << it->second._memory << ") with size:"<< it->second._memory->get_layout().bytes_count() << std::endl;
++                }
++            }
++
++            it->second._users.insert(memory_user(id, network_id, layout.bytes_count(), 0));
+             auto ret_mem = _engine->reinterpret_buffer(*it->second._memory, layout);
+             return ret_mem;
+-        } else {
++        }
++        else if (may_reuse) {//may resue, need to figure out whether it has available slot
++            std::vector<std::vector<size_t>> intervals;
++            for (auto conflict : conflicts) {
++                for (auto &user : it->second._users) {
++                    if (user._id == conflict) {
++                        intervals.push_back({user._offset, user._offset + user._size});
++                    }
++                }
++            }
++            //merge overlapped intervals
++            sort(intervals.begin(), intervals.end());
++            std::vector<std::vector<size_t>> res = {intervals[0]};
++            for (int i = 1; i < intervals.size(); i++) {
++                if (res.back()[1] >= intervals[i][0]) {
++                    res.back()[1] = std::max(res.back()[1], intervals[i][1]);
++                    continue;
++                } else {
++                    res.push_back(intervals[i]);
++                }
++            }
++
++            std::vector<std::vector<size_t>> availables = {};
++            if (res[0][0] > 0)
++                availables.push_back({res[0][0], 0 });
++            for (int i = 0; i < res.size() - 1; i++) {
++                availables.push_back({res[i+1][0] - res[i][1], res[i][1]});
++            }
++            if (res.back()[1] < it->second._memory->get_layout().bytes_count()) {
++                availables.push_back({it->second._memory->get_layout().bytes_count() - res.back()[1], res.back()[1]});
++            }
++
++            sort(availables.begin(), availables.end());
++
++            size_t offset = 0; int i = 0;
++            for (; i < availables.size(); i ++) {
++                if (availables[i][0] >= layout.bytes_count()) {
++                    offset = availables[i][1];
++                    break;
++                }
++            }
++
++            if ( i == availables.size()) {
++                ++it;
++                continue;
++            }
++
++            GPU_DEBUG_IF(debug_config->verbose >= 2) {
++                if (type == allocation_type::usm_device) {
++                    GPU_DEBUG_COUT << id << "(" << layout.bytes_count() << ")" << "reuse memory (ptr:" << it->second._memory <<", size" << it->second._memory->get_layout().bytes_count() << ") with offset:"<< offset << std::endl;
++                }
++            }
++
++            it->second._users.insert(memory_user(id, network_id, layout.bytes_count(), offset));
++            auto ret_mem = _engine->reinterpret_buffer(*it->second._memory, layout, offset);
++            return ret_mem;
++
++        }
++        else { //impossible to resue the memory
+             ++it;
+         }
+     }
+-    GPU_DEBUG_GET_INSTANCE(debug_config);
+-    GPU_DEBUG_IF(debug_config->verbose >= 2) {
+-        GPU_DEBUG_COUT << "[" << id << ": output]" << std::endl;
++
++    //TODO: temporary workround for insufficient memory by Renzhi
++    auto allocated_memory = _engine->get_used_device_memory(type);
++    if (type == allocation_type::usm_device &&
++         allocated_memory + layout.bytes_count() > _engine->get_device_info().max_global_mem_size) {
++            GPU_DEBUG_COUT << "Warning: No available device memory for " << id << ", will use system memory instead." << std::endl;
++        return nullptr;
+     }
+     // didn't find anything for you? create new resource
+     auto mem = alloc_memory(layout, type);
+     {
+         _non_padded_pool.emplace(layout.bytes_count(),
+-                                 memory_record({{id, network_id}}, mem, network_id, type));
++                                 memory_record({{id, network_id, layout.bytes_count(), 0}}, mem, network_id, type));
++    }
++
++    GPU_DEBUG_IF(debug_config->verbose >= 2) {
++        GPU_DEBUG_COUT << "[non-padded, " << id  << "(mem:" << mem  << ",type:" << type << ")"<< ": output]" << std::endl;
+     }
+     return mem;
+ }
+@@ -159,6 +241,7 @@ memory::ptr memory_pool::get_from_padded_pool(const layout& layout,
+ 
+     if (first_level_cache != _padded_pool.end()) {
+         for (auto& rec_list : first_level_cache->second) {
++            auto conflicts = get_conflicts(rec_list._users, restrictions, network_id);
+             if (rec_list._network_id == network_id &&
+                 rec_list._type == type &&
+                 ((layout.format != format::b_fs_yx_fsv32 && layout.format != format::b_fs_zyx_fsv32) ||
+@@ -167,24 +250,39 @@ memory::ptr memory_pool::get_from_padded_pool(const layout& layout,
+                 layout.size.feature[0] <= rec_list._memory->get_layout().size.feature[0] &&
+                 layout.size.batch[0] <= rec_list._memory->get_layout().size.batch[0] &&
+                 rec_list._memory->get_layout().format != format::fs_b_yx_fsv32 &&
+-                layout.format != format::fs_b_yx_fsv32 &&
+-                !has_conflict(rec_list._users, restrictions, network_id)) {
+-                rec_list._users.insert({id, network_id});
++                layout.format != format::fs_b_yx_fsv32 && conflicts.empty()) {
++                rec_list._users.insert({id, network_id, layout.bytes_count(), 0});
+                 auto ret_mem = _engine->reinterpret_buffer(*(rec_list._memory), layout);
+                 return ret_mem;
+             }
+         }
++
++        //TODO: temporary workround for insufficient memory by Renzhi
++        auto allocated_memory = _engine->get_used_device_memory(type);
++        if (type == allocation_type::usm_device &&
++            allocated_memory + layout.bytes_count() > _engine->get_device_info().max_global_mem_size) {
++            return nullptr;
++        }
++
+         auto mem = alloc_memory(layout, type);
+         first_level_cache->second.emplace_back(
+-            memory_record({{id, network_id}}, mem, network_id, type));
++            memory_record({{id, network_id, layout.bytes_count(), 0}}, mem, network_id, type));
+         return mem;
+     }
+     GPU_DEBUG_GET_INSTANCE(debug_config);
+     GPU_DEBUG_IF(debug_config->verbose >= 2) {
+-        GPU_DEBUG_COUT << "[" << id << ": output]" << std::endl;
++        GPU_DEBUG_COUT << "[padded, " << id << ": output]" << std::endl;
+     }
++
++    //TODO: temporary workround for insufficient memory by Renzhi
++    auto allocated_memory = _engine->get_used_device_memory(type);
++    if (type == allocation_type::usm_device &&
++        allocated_memory + layout.bytes_count() > _engine->get_device_info().max_global_mem_size) {
++        return nullptr;
++    }
++
+     auto mem = alloc_memory(layout, type);
+-    std::list<memory_record> list = {memory_record({{id, network_id}}, mem, network_id, type)};
++    std::list<memory_record> list = {memory_record({{id, network_id, layout.bytes_count(), 0}}, mem, network_id, type)};
+     _padded_pool.emplace(layout, std::move(list));
+     return mem;
+ }
+@@ -200,10 +298,11 @@ memory::ptr memory_pool::get_from_across_networks_pool(const layout& layout,
+     auto it = _no_reusable_pool.lower_bound(layout.bytes_count());
+ 
+     while (it != _no_reusable_pool.end()) {
++        auto conflicts = get_conflicts(it->second._users, {}, network_id);
+         if (it->second._network_id != network_id &&
+             it->second._type == type) {  // don't use non reusable resources within the same network
+-            if (!has_conflict(it->second._users, {}, network_id)) {
+-                it->second._users.insert(memory_user(id, network_id));
++            if (conflicts.empty()) {
++                it->second._users.insert(memory_user(id, network_id, layout.bytes_count(), 0));
+                 auto ret_mem = _engine->reinterpret_buffer(*it->second._memory, layout);
+                 return ret_mem;
+             }
+@@ -213,7 +312,7 @@ memory::ptr memory_pool::get_from_across_networks_pool(const layout& layout,
+     auto mem = alloc_memory(layout, type);
+     {
+         _no_reusable_pool.emplace(layout.bytes_count(),
+-                                  memory_record({{id, network_id}}, mem, network_id, type));
++                                  memory_record({{id, network_id, layout.bytes_count(), 0}}, mem, network_id, type));
+     }
+     return mem;
+ }
+diff --git a/src/plugins/intel_gpu/src/runtime/ocl/ocl_engine.cpp b/src/plugins/intel_gpu/src/runtime/ocl/ocl_engine.cpp
+index cc7c6da724..cfcb3c14e2 100644
+--- a/src/plugins/intel_gpu/src/runtime/ocl/ocl_engine.cpp
++++ b/src/plugins/intel_gpu/src/runtime/ocl/ocl_engine.cpp
+@@ -12,6 +12,8 @@
+ #include <set>
+ #include <stdexcept>
+ 
++#include "intel_gpu/runtime/debug_configuration.hpp"
++
+ // NOTE: Due to buggy scope transition of warnings we need to disable warning in place of use/instantation
+ //       of some types (even though we already disabled them in scope of definition of these types).
+ //       Moreover this warning is pretty much now only for annoyance: it is generated due to lack
+@@ -124,7 +126,7 @@ memory::ptr ocl_engine::allocate_memory(const layout& layout, allocation_type ty
+     }
+ }
+ 
+-memory::ptr ocl_engine::reinterpret_buffer(const memory& memory, const layout& new_layout) {
++memory::ptr ocl_engine::reinterpret_buffer(const memory& memory, const layout& new_layout, const size_t offset) {
+     if (memory.get_engine() != this)
+         throw std::runtime_error("trying to reinterpret buffer allocated by a different engine");
+ 
+@@ -136,15 +138,21 @@ memory::ptr ocl_engine::reinterpret_buffer(const memory& memory, const layout& n
+ 
+     try {
+         if (new_layout.format.is_image_2d()) {
++           //image2d buffer do not support resuse with none-zeron offset.
++           assert(offset == 0);
+            return std::make_shared<ocl::gpu_image2d>(this,
+                                      new_layout,
+                                      reinterpret_cast<const ocl::gpu_image2d&>(memory).get_buffer());
+         } else if (memory_capabilities::is_usm_type(memory.get_allocation_type())) {
++            auto& mem = reinterpret_cast<const ocl::gpu_usm&>(memory).get_buffer();
++            cl::UsmMemory usm_mem(get_usm_helper(), mem.get() + offset);
+             return std::make_shared<ocl::gpu_usm>(this,
+                                      new_layout,
+-                                     reinterpret_cast<const ocl::gpu_usm&>(memory).get_buffer(),
++                                     usm_mem,
+                                      memory.get_allocation_type());
+         } else {
++          //currently do not support reuse buffer with offset
++           assert(offset == 0);
+            return std::make_shared<ocl::gpu_buffer>(this,
+                                     new_layout,
+                                     reinterpret_cast<const ocl::gpu_buffer&>(memory).get_buffer());
+diff --git a/src/plugins/intel_gpu/src/runtime/ocl/ocl_engine.hpp b/src/plugins/intel_gpu/src/runtime/ocl/ocl_engine.hpp
+index 357da32602..82546c02ac 100644
+--- a/src/plugins/intel_gpu/src/runtime/ocl/ocl_engine.hpp
++++ b/src/plugins/intel_gpu/src/runtime/ocl/ocl_engine.hpp
+@@ -26,7 +26,7 @@ public:
+ 
+     memory_ptr allocate_memory(const layout& layout, allocation_type type, bool reset = true) override;
+     memory_ptr reinterpret_handle(const layout& new_layout, shared_mem_params params) override;
+-    memory_ptr reinterpret_buffer(const memory& memory, const layout& new_layout) override;
++    memory_ptr reinterpret_buffer(const memory& memory, const layout& new_layout, const size_t offset = 0) override;
+     bool is_the_same_buffer(const memory& mem1, const memory& mem2) override;
+ 
+     void* get_user_context() const override;
+diff --git a/tools/cross_check_tool/openvino/tools/cross_check_tool/utils.py b/tools/cross_check_tool/openvino/tools/cross_check_tool/utils.py
+old mode 100644
+new mode 100755
+index 21a736954d..29038b16b0
+--- a/tools/cross_check_tool/openvino/tools/cross_check_tool/utils.py
++++ b/tools/cross_check_tool/openvino/tools/cross_check_tool/utils.py
+@@ -433,7 +433,8 @@ def accuracy_metrics(tensor, ref_tensor):
+         raise Exception(f'Different number of elements in tensors {tensor.size} and {ref_tensor.size}. Can not compare')
+     abs_diff = np.absolute(tensor - ref_tensor)
+     np.seterr(divide='ignore', invalid='ignore')
+-    rel_diff = np.divide(abs_diff, np.min(abs_diff) if np.min(abs_diff) != 0 else 1e-20)
++    # rel_diff = np.divide(abs_diff, np.min(abs_diff) if np.min(abs_diff) != 0 else 1e-20)
++    rel_diff = np.divide(abs_diff, np.absolute(tensor))
+ 
+     metrics = [
+         ('Max absolute difference', np.max(abs_diff)),
+@@ -519,7 +520,8 @@ def print_all_over_the_net_metrics(global_accuracy: list, global_times: list = N
+ def get_ops_list(all_ops: list, outputs: list, layers: str):
+     if layers is not None and layers != 'None':
+         if layers == 'all':
+-            return [op for op in all_ops if op.get_type_name() not in ['Constant', 'Result', 'Parameter']]
++            return [op for op in all_ops if op.get_type_name() not in ['Constant', 'Result', 'Parameter', 'Less', 'Greater', 'Equal', 'Convolution']]
++            # return [op for op in all_ops if op.get_type_name() in ['Concat']]
+         else:
+             all_ops_map = {op.friendly_name: op for op in all_ops}
+             user_ops = [layer.strip() for layer in layers.split(',')]
+diff --git a/tools/mo/openvino/tools/mo/back/offline_transformations.py b/tools/mo/openvino/tools/mo/back/offline_transformations.py
+index b2d18e5595..ef41032fe0 100644
+--- a/tools/mo/openvino/tools/mo/back/offline_transformations.py
++++ b/tools/mo/openvino/tools/mo/back/offline_transformations.py
+@@ -65,6 +65,7 @@ def apply_offline_transformations(input_model: str, argv: argparse.Namespace):
+     # be destructed before fem object explicitly.
+     def read_model(path_to_xml):
+         fe = fem.load_by_framework(framework="ir")
++        fe.add_extension(argv.extension_for_ngraph_validation)  
+         function = fe.convert(fe.load(path_to_xml))
+         return function
+ 
+diff --git a/tools/mo/openvino/tools/mo/custom_op_mo_extension/front/onnx/flow_warp_custom_op_ext.py b/tools/mo/openvino/tools/mo/custom_op_mo_extension/front/onnx/flow_warp_custom_op_ext.py
+new file mode 100644
+index 0000000000..db2d8fefb6
+--- /dev/null
++++ b/tools/mo/openvino/tools/mo/custom_op_mo_extension/front/onnx/flow_warp_custom_op_ext.py
+@@ -0,0 +1,14 @@
++from mo.front.extractor import FrontExtractorOp
++from mo.ops.op import Op
++from mo.my_mo_extensions.ops.flow_warp_custom_op import FlowWarp
++class FlowWarpFrontExtractor(FrontExtractorOp):
++    op = 'flow_warp'
++    enabled = True
++
++    @classmethod
++    def extract(cls, node):
++        # Op.get_op_class_by_name('flow_warp').update_node_stat(node)
++        attrs = {}
++        FlowWarp.update_node_stat(node,attrs)
++
++        return cls.enabled
+\ No newline at end of file
+diff --git a/tools/mo/openvino/tools/mo/custom_op_mo_extension/ops/flow_warp_custom_op.py b/tools/mo/openvino/tools/mo/custom_op_mo_extension/ops/flow_warp_custom_op.py
+new file mode 100644
+index 0000000000..41bab195eb
+--- /dev/null
++++ b/tools/mo/openvino/tools/mo/custom_op_mo_extension/ops/flow_warp_custom_op.py
+@@ -0,0 +1,21 @@
++import numpy as np
++
++# from openvino.tools.mo.front.extractor import bool_to_str
++from openvino.tools.mo.graph.graph import Node, Graph
++from openvino.tools.mo.ops.op import Op
++class FlowWarp(Op):
++    op = 'flow_warp'
++    def __init__(self, graph, attrs):
++        mandatory_props = {
++            'type': self.op,  
++            'op': self.op,   
++            'infer': self.infer
++        }
++        super().__init__(graph, mandatory_props, attrs)
++    
++    @staticmethod
++    def infer(node):
++        node_name = node.soft_get('name', node.id)
++        input_shape = node.in_port(0).data.get_shape()
++        assert input_shape is not None, 'Input shape is None for node "{}"'.format(node_name)
++        node.out_port(0).data.set_shape(input_shape)
+\ No newline at end of file
+diff --git a/tools/mo/openvino/tools/mo/utils/cli_parser.py b/tools/mo/openvino/tools/mo/utils/cli_parser.py
+index 295120a999..e12edb3cac 100644
+--- a/tools/mo/openvino/tools/mo/utils/cli_parser.py
++++ b/tools/mo/openvino/tools/mo/utils/cli_parser.py
+@@ -410,6 +410,12 @@ def get_common_cli_parser(parser: argparse.ArgumentParser = None):
+                               default=import_extensions.default_path(),
+                               action=CanonicalizePathCheckExistenceAction,
+                               type=readable_dirs_or_files_or_empty)
++    common_group.add_argument("--extension_for_ngraph_validation",   
++                            help="Path to libraries (.so or .dll) "
++                                "extension about custom operator for ngraph validation before generate the final IR",
++                            default=import_extensions.default_path(),
++                            action=CanonicalizePathCheckExistenceAction,
++                            type=readable_dirs_or_files_or_empty)
+     common_group.add_argument("--batch", "-b",
+                               type=check_positive,
+                               default=None,
+diff --git a/tools/pot/openvino/tools/pot/engines/ie_engine.py b/tools/pot/openvino/tools/pot/engines/ie_engine.py
+index 8acfbcd265..de4b3115ef 100644
+--- a/tools/pot/openvino/tools/pot/engines/ie_engine.py
++++ b/tools/pot/openvino/tools/pot/engines/ie_engine.py
+@@ -102,24 +102,98 @@ class IEEngine(Engine):
+             nodes_name = list(nodes_names_map.keys())
+             cast_friendly_names(self._model.outputs)
+ 
+-            outputs = self._add_outputs(list(nodes_names_map.values()))
+-            add_tensor_names(outputs, nodes_name)
+ 
+-            model_output_names = collect_model_outputs(self._model)
+-
+-            align_stat_names_with_results(model_output_names,
+-                                          nodes_name,
+-                                          output_to_node_names,
+-                                          stats_layout,
+-                                          stat_aliases)
+-
+-            # Creating statistics layout with IE-like names
+-            stats_layout, stat_names_aliases = self._convert_stats_names(stats_layout)
+-
+-        self._predict(stats_layout=stats_layout,
+-                      sampler=sampler,
+-                      print_progress=print_progress,
+-                      need_metrics_per_sample=metric_per_sample)
++            def outputs_memory_need(outputs):
++                total_need = 0
++                max_need = 0
++                for output in outputs:
++                    node_memory_size = output.get_tensor().size
++                    max_need = max(max_need,node_memory_size)
++                    total_need += node_memory_size
++                return total_need,max_need
++            nodes_names_map_values = list(nodes_names_map.values())
++            outputs = self._add_outputs(nodes_names_map_values)
++            memory_needs,peek_need = outputs_memory_need(outputs)
++            
++            import os
++            availiable_system_memory = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_AVPHYS_PAGES')
++            
++            min_output_num = int(availiable_system_memory//peek_need)
++            if len(outputs) > min_output_num: 
++                subset_outputs = min_output_num
++                logger.info(f'Available system memory {availiable_system_memory} may not enough for memory needs {memory_needs}')
++                logger.info('Get in iteration mode:')
++                times = len(nodes_names_map_values) // subset_outputs
++                remain = len(nodes_names_map_values) % subset_outputs
++                for idx in range(times):
++                    logger.info(f'Iteraion No.{idx}/{times} for adding output and inference')
++                    self.set_model(model_with_stat_op)
++                    cast_friendly_names(self._model.outputs)
++
++                    subset_nodes_names_map_values = nodes_names_map_values[idx*subset_outputs:(idx+1)*subset_outputs]
++                    outputs = self._add_outputs(subset_nodes_names_map_values)
++
++                    subset_nodes_name = nodes_name[idx*subset_outputs:(idx+1)*subset_outputs]
++                    add_tensor_names(outputs, subset_nodes_name)
++
++                    model_output_names = collect_model_outputs(self._model)
++                    align_stat_names_with_results(model_output_names,
++                                            subset_nodes_name,
++                                            output_to_node_names,
++                                            stats_layout,
++                                            stat_aliases)
++
++                    # Creating statistics layout with IE-like names
++                    stats_layout, stat_names_aliases = self._convert_stats_names(stats_layout)
++                    self._predict(stats_layout=stats_layout,
++                        sampler=sampler,
++                        print_progress=print_progress,
++                        need_metrics_per_sample=metric_per_sample)
++                if remain:
++                    logger.info('In the last outputs to be added')
++                    self.set_model(model_with_stat_op)
++                    cast_friendly_names(self._model.outputs)
++
++                    subset_nodes_names_map_values = nodes_names_map_values[times*subset_outputs:len(nodes_names_map_values)]
++                    outputs = self._add_outputs(subset_nodes_names_map_values)
++                    subset_nodes_name = nodes_name[times*subset_outputs:len(nodes_names_map_values)]
++                    add_tensor_names(outputs, subset_nodes_name)
++
++                    model_output_names = collect_model_outputs(self._model)
++                    align_stat_names_with_results(model_output_names,
++                                            subset_nodes_name,
++                                            output_to_node_names,
++                                            stats_layout,
++                                            stat_aliases)
++
++                    # Creating statistics layout with IE-like names
++                    stats_layout, stat_names_aliases = self._convert_stats_names(stats_layout)
++                    self._predict(stats_layout=stats_layout,
++                        sampler=sampler,
++                        print_progress=print_progress,
++                        need_metrics_per_sample=metric_per_sample)
++                logger.info('Finish the outputs adding iteration')
++            else:
++                add_tensor_names(outputs, nodes_name)
++                
++                model_output_names = collect_model_outputs(self._model)
++                
++                align_stat_names_with_results(model_output_names,
++                                            nodes_name,
++                                            output_to_node_names,
++                                            stats_layout,
++                                            stat_aliases)
++                # Creating statistics layout with IE-like names
++                stats_layout, stat_names_aliases = self._convert_stats_names(stats_layout)
++                self._predict(stats_layout=stats_layout,
++                            sampler=sampler,
++                            print_progress=print_progress,
++                            need_metrics_per_sample=metric_per_sample)
++        else:
++            self._predict(stats_layout=stats_layout,
++                sampler=sampler,
++                print_progress=print_progress,
++                need_metrics_per_sample=metric_per_sample)
+ 
+         # Process accumulated statistics
+         # Replace IE-like statistics names with the original ones
+diff --git a/vsr_opt/VSR Introduction.md b/vsr_opt/VSR Introduction.md
+new file mode 100644
+index 0000000000..d1aac95d38
+--- /dev/null
++++ b/vsr_opt/VSR Introduction.md	
+@@ -0,0 +1,32 @@
++# VSR Introduction
++
++This tutorial demonstrates step-by-step instructions to perform Video Super Resolution (VSR) inference on a Pytorch model using OpenVINO's Inference Engine.
++
++## Pytorch to ONNX
++
++Firstly, the PyTorch model needs to be converted to ONNX, you may refer to [Convert PyTorch model to ONNX](https://docs.openvino.ai/latest/notebooks/102-pytorch-onnx-to-openvino-with-output.html#onnx-model-conversion) for details. There is an sample script `pytorch2onnx.py` implements the model conversion. You can perform the model conversion by command:
++```bash
++python3 pytorch2onnx.py --input_model <Pytorch model> --output_dir <Output dir to store ONNX model>
++```
++
++## ONNX to OpenVINO IR
++
++Then the ONNX model needs to be further converted to OpenVINO Intermediate Representation (IR) formats. Call the OpenVINO Model Optimizer tool to convert the ONNX model to OpenVINO IR. There is a sample command to convert onnx model to OpenVINO IR:
++```bash
++mo --input_model <onnx model path> --output_dir <path to store openvino IR> 
++```
++
++
++ Refer to [Convert model with Model Optimizer](https://docs.openvino.ai/latest/openvino_docs_MO_DG_Deep_Learning_Model_Optimizer_DevGuide.html) for more information. 
++
++## OpenVINO IR Quantization
++
++Since the precision of original Pytorch model may be FP32 or FP16, in order to cut down the memory cost and accelerate the inference process you may need to perform model quantization. OpenVINO provides a Post-training Optimization Tool (POT) which supports the uniform integer quantization method. There is a sample script `quantization.py` to perform INT8 quantization . You may perform INT8 quantization by command:
++```bash
++python3 quantization.py --input_model <xml model to be quantized> --dataset_path <path of calibration dataset> --sub_folder <scenario sub-folder of calibration dataset> --nif <number of input frames>  
++```
++
++
++Refer to [Post-training Optimization Tool](https://docs.openvino.ai/latest/pot_introduction.html) for more information.
++
++## OpenVINO IR Inference
+\ No newline at end of file
+diff --git a/vsr_opt/samples/ReadMe.md b/vsr_opt/samples/ReadMe.md
+new file mode 100755
+index 0000000000..d964487314
+--- /dev/null
++++ b/vsr_opt/samples/ReadMe.md
+@@ -0,0 +1,31 @@
++# BasicVSR Sample
++
++There are several python scripts about basicvsr model inference and quantization.
++
++## Inference
++You can perform basicvsr inference by running `basicvsr_infer.py`. Before inference, you need to prepare the model and data. The model can be either in *.onnx or *.xml format. For the inference data, you need to organize the data with low resolution in `LR` directory and with high resolution in `HR` directory. You can provide the data path before `LR` and `HR` as a parameter.
++
++Below is an example command to perform model inference:
++```bash
++python3 basicvsr_infer.py --ir_model_path ./models/input_1_3_3_1080_1920.xml --data_path ./dataset/cuc/ --data_subfolder 000 --nif 3 --save_predictions
++```
++In the example, the data is organized as:
++```text
++basicvsr_sample
++    |---dataset
++        |---cuc
++            |---LR
++                |--000
++            |---HR
++                |---000 
++```
++
++## Quantization
++
++The model quantization workflow is defined in `quantization_basicvsr.py`. You can choose either default quantization algorithm or accuarcy aware quantization algorithm. You need to provide the model to be quantized and the dataset for validation.
++
++Below is an example command to perform default quantization:
++```bash
++python3 quantization_basicvsr.py --model_path ./models --model_name input_1_5_3_1080_1920 --dataset_path ./dataset/cuc/ --sub_folders 000 --nif 3
++```
++
+diff --git a/vsr_opt/samples/basicvsr_infer.py b/vsr_opt/samples/basicvsr_infer.py
+new file mode 100755
+index 0000000000..cac30c9555
+--- /dev/null
++++ b/vsr_opt/samples/basicvsr_infer.py
+@@ -0,0 +1,256 @@
++#!/usr/bin/env python
++# coding=utf-8
++
++from openvino.runtime import Core
++import torch
++import numpy as np
++import cv2
++import mmcv
++from tqdm import tqdm
++
++from basicvsr_metrics import BasicvsrMetrics
++from quantization_dataloader import FramesLoader
++import argparse
++import os
++from torchvision.utils import make_grid
++import math
++
++from crop_restore_image import restore_crop_from_patch,crop_images_to_patch,crop_images_to_random_patch,restore_random_crop_from_patch
++
++
++def parse_args():
++    parser = argparse.ArgumentParser(description='Model Inference')
++    parser.add_argument(
++        '--ir_model_path',
++        default='',
++        type=str,
++        help='Optional. Path to store openvino ir model')
++    parser.add_argument(
++        '--onnx_model_path',
++        default='',
++        type=str,
++        help='Optional. Path to store onnx model') 
++    parser.add_argument(
++        '--data_path',
++        default='./dataset/cuc',
++        type=str,
++        help='Need. Dataset path ') 
++    parser.add_argument(
++        '--data_subfolder',
++        default='000',  # cuc:029 || reds:'000', '011', '015', '020' || new cuc: 000 001 004 006 008
++        type=str,
++        help='Need. Dataset subfolder ') 
++    parser.add_argument(
++        '--nif',
++        default=3,
++        type=int,
++        help='Need. Number of input frames')
++    parser.add_argument(
++        '--extension',
++        default='',
++        type=str,
++        help='Optional. Extension (.so or .dll) path ') 
++    parser.add_argument(
++        '--device',
++        default='CPU',
++        type=str,
++        help='Optional. CPU or GPU ') 
++    parser.add_argument('--save_predictions', 
++        action='store_true', 
++        help='Optional. Save the model predictions as images')   
++    parser.add_argument('--patch_evalution', 
++        action='store_true', 
++        help='Optional. Evalute by image patches')  
++    parser.add_argument(
++        '--save_path',
++        default='./outputs/',
++        type=str,
++        help='Optional.Path to save predictions')
++    args = parser.parse_args()
++    return args
++
++def tensor2img(tensor, out_type=np.uint8, min_max=(0, 1)):
++    """Convert torch Tensors into image numpy arrays.
++
++    After clamping to (min, max), image values will be normalized to [0, 1].
++
++    For differnet tensor shapes, this function will have different behaviors:
++
++        1. 4D mini-batch Tensor of shape (N x 3/1 x H x W):
++            Use `make_grid` to stitch images in the batch dimension, and then
++            convert it to numpy array.
++        2. 3D Tensor of shape (3/1 x H x W) and 2D Tensor of shape (H x W):
++            Directly change to numpy array.
++
++    Note that the image channel in input tensors should be RGB order. This
++    function will convert it to cv2 convention, i.e., (H x W x C) with BGR
++    order.
++
++    Args:
++        tensor (Tensor | list[Tensor]): Input tensors.
++        out_type (numpy type): Output types. If ``np.uint8``, transform outputs
++            to uint8 type with range [0, 255]; otherwise, float type with
++            range [0, 1]. Default: ``np.uint8``.
++        min_max (tuple): min and max values for clamp.
++
++    Returns:
++        (Tensor | list[Tensor]): 3D ndarray of shape (H x W x C) or 2D ndarray
++        of shape (H x W).
++    """
++    if not (torch.is_tensor(tensor) or
++            (isinstance(tensor, list)
++             and all(torch.is_tensor(t) for t in tensor))):
++        raise TypeError(
++            f'tensor or list of tensors expected, got {type(tensor)}')
++
++    if torch.is_tensor(tensor):
++        tensor = [tensor]
++    result = []
++    for _tensor in tensor:
++        # Squeeze two times so that:
++        # 1. (1, 1, h, w) -> (h, w) or
++        # 3. (1, 3, h, w) -> (3, h, w) or
++        # 2. (n>1, 3/1, h, w) -> (n>1, 3/1, h, w)
++        _tensor = _tensor.squeeze(0).squeeze(0)
++        _tensor = _tensor.float().detach().cpu().clamp_(*min_max)
++        _tensor = (_tensor - min_max[0]) / (min_max[1] - min_max[0])
++        n_dim = _tensor.dim()
++        if n_dim == 4:
++            img_np = make_grid(
++                _tensor, nrow=int(math.sqrt(_tensor.size(0))),
++                normalize=False).numpy()
++            img_np = np.transpose(img_np[[2, 1, 0], :, :], (1, 2, 0))
++        elif n_dim == 3:
++            img_np = _tensor.numpy()
++            img_np = np.transpose(img_np[[2, 1, 0], :, :], (1, 2, 0))
++        elif n_dim == 2:
++            img_np = _tensor.numpy()
++        else:
++            raise ValueError('Only support 4D, 3D or 2D tensor. '
++                             f'But received with dimension: {n_dim}')
++        if out_type == np.uint8:
++            img_np = (img_np * 255.0).round()
++
++        img_np.astype(out_type)
++        result.append(img_np)
++    result = result[0] if len(result) == 1 else result
++    return result
++
++def model_inference(model_path,input):
++    ie = Core()
++    input_model=ie.read_model(model=model_path)
++    compiled_model = ie.compile_model(model=input_model,device_name="CPU")
++    
++    input_layer = next(iter(compiled_model.inputs))
++    output_layer = next(iter(compiled_model.outputs))
++
++    res = compiled_model(inputs=[input])[output_layer]
++
++    return res
++
++def inference(compiled_model,output_layer,dataloader,metrics,patch_evalution=False):
++    results = []
++    acc_psnr = []
++    acc_ssim = []
++    for idx,(input,target) in tqdm(enumerate(dataloader),total = len(dataloader)):
++        if patch_evalution:
++            input_patch_list = crop_images_to_random_patch(input,[190,340], [2,2], overlapp_size=[0, 0], scale=1)
++            pred_patch_list = []
++            for idx in range(len(input_patch_list)):
++                input_patch = input_patch_list[idx]
++                pred_patch = compiled_model(inputs=[input_patch])[output_layer]
++                pred_patch_list.append(pred_patch)
++            pred = restore_random_crop_from_patch(pred_patch_list, ori_size=[720,1280], crop_size=[380,680], blocks=[2,2], padding=0, scales=1)
++        else:
++            pred = compiled_model(inputs=[input])[output_layer]
++        results.append(pred)
++        metrics.update(pred,target)
++        acc_psnr.append(np.array(metrics.value['PSNR']).mean())
++        acc_ssim.append(np.array(metrics.value['SSIM']).mean())
++    
++    print(f'PSNR:{acc_psnr}')
++    print(f'SSIM:{acc_ssim}')
++    print(f'Avg PSNR:{np.array(acc_psnr).mean()}, Avg SSIM:{np.array(acc_ssim).mean()}')
++    return metrics.avg_value,results
++
++def accuracy_drop(ir_acc,onnx_acc):
++    drop_acc = {}
++    drop_percentage = {}
++    for key in ir_acc.keys():
++        key_drop = onnx_acc[key] - ir_acc[key] 
++        drop_acc[key] = key_drop
++        drop_percentage[key] = key_drop/onnx_acc[key]
++    return drop_acc,drop_percentage
++
++
++def save_outputs(predictions,save_path,type,data_file_list):
++    save_file_path = os.path.join(save_path,type)
++    for id in range(len(predictions)):
++        output = predictions[id]
++        output = torch.from_numpy(output)
++        if output.ndim==5:
++            for i in range(0,output.shape[1]):
++                output_i = tensor2img(output[:,i,:,:,:])
++                file_dir = data_file_list[id*output.shape[1]+i].split('/')[-2]
++                file_name = data_file_list[id*output.shape[1]+i].split('/')[-1]
++                rela_file_path = os.path.join(file_dir,file_name)
++                res = mmcv.imwrite(output_i,os.path.join(save_file_path,rela_file_path))
++        elif output.ndim == 4:  
++            output_i = tensor2img(output)
++            file_path = data_file_list[id].split('/')[-2]
++            file_name = data_file_list[id].split('/')[-1]
++            res = mmcv.imwrite(output_i,os.path.join(save_file_path,os.path.join(file_path,file_name)))
++
++        else:
++            raise Exception('The output cannot be saved '
++                            'for a model with wrong output dims')
++            
++        if res == False:
++            print("Failed to save image")
++
++
++
++def dataset_main():
++    args = parse_args()
++    dataloader = FramesLoader(dataset_path=args.data_path,LR_or_HR=['LR','HR'],sub_folder=args.data_subfolder,num_input_frames=args.nif)
++    # metrics
++    ir_metric = BasicvsrMetrics(['PSNR','SSIM'],False)
++    onnx_metric = BasicvsrMetrics(['PSNR','SSIM'],False)
++
++    ie = Core()
++    # add extension: flow_warp_op
++    if args.extension != '':
++        # ie.add_extension('../openvino/bin/intel64/Release/lib/libcustom_extension.so') 
++        ie.add_extension(args.extension) 
++    if args.ir_model_path != '':
++        ir_input_model=ie.read_model(model=args.ir_model_path)
++        ir_compiled_model = ie.compile_model(model=ir_input_model,device_name=args.device)
++        ir_input_layer = next(iter(ir_compiled_model.inputs))
++        ir_output_layer = next(iter(ir_compiled_model.outputs))
++        ir_acc,ir_results = inference(ir_compiled_model,ir_output_layer,dataloader,ir_metric,args.patch_evalution)
++        print(f'Quantized model metrics: {ir_acc}')
++
++    # onnx
++    if args.onnx_model_path != '':
++        onnx_input_model=ie.read_model(model=args.onnx_model_path)
++        onnx_compiled_model = ie.compile_model(model=onnx_input_model,device_name=args.device)
++        onnx_input_layer = next(iter(onnx_compiled_model.inputs))
++        onnx_output_layer = next(iter(onnx_compiled_model.outputs))
++        onnx_acc,onnx_results = inference(onnx_compiled_model,onnx_output_layer,dataloader,onnx_metric,args.patch_evalution)
++        print(f'Original model metrics: {onnx_acc}')
++
++    if args.ir_model_path != '' and args.onnx_model_path != '':
++        acc_drop,drop_percentage = accuracy_drop(ir_acc,onnx_acc)
++        print(f'Drop accuracy:{acc_drop}')
++        print(f'Drop percentage:{drop_percentage}')
++
++    if args.save_predictions:
++        if args.ir_model_path != '':
++            save_outputs(ir_results,args.save_path,'ir',dataloader._lq_files)
++        if args.onnx_model_path != '':
++            save_outputs(onnx_results,args.save_path,'onnx',dataloader._lq_files)
++        print('Finished image saving')
++
++
++if __name__=='__main__':
++    dataset_main()
+\ No newline at end of file
+diff --git a/vsr_opt/samples/basicvsr_metrics.py b/vsr_opt/samples/basicvsr_metrics.py
+new file mode 100755
+index 0000000000..b211f872b9
+--- /dev/null
++++ b/vsr_opt/samples/basicvsr_metrics.py
+@@ -0,0 +1,327 @@
++#!/usr/bin/env python
++# coding=utf-8
++import numpy as np
++import torch
++import cv2
++
++import mmcv
++from openvino.tools.pot import Metric
++from torchvision.utils import make_grid
++import math
++from openvino.tools.pot.utils.logger import get_logger
++logger = get_logger(__name__)
++
++def tensor2img(tensor, out_type=np.uint8, min_max=(0, 1)):
++    """Convert torch Tensors into image numpy arrays. from: mmedit/core/misc.py
++
++    After clamping to (min, max), image values will be normalized to [0, 1].
++
++    For differnet tensor shapes, this function will have different behaviors:
++
++        1. 4D mini-batch Tensor of shape (N x 3/1 x H x W):
++            Use `make_grid` to stitch images in the batch dimension, and then
++            convert it to numpy array.
++        2. 3D Tensor of shape (3/1 x H x W) and 2D Tensor of shape (H x W):
++            Directly change to numpy array.
++
++    Note that the image channel in input tensors should be RGB order. This
++    function will convert it to cv2 convention, i.e., (H x W x C) with BGR
++    order.
++
++    Args:
++        tensor (Tensor | list[Tensor]): Input tensors.
++        out_type (numpy type): Output types. If ``np.uint8``, transform outputs
++            to uint8 type with range [0, 255]; otherwise, float type with
++            range [0, 1]. Default: ``np.uint8``.
++        min_max (tuple): min and max values for clamp.
++
++    Returns:
++        (Tensor | list[Tensor]): 3D ndarray of shape (H x W x C) or 2D ndarray
++        of shape (H x W).
++    """
++    if not (torch.is_tensor(tensor) or
++            (isinstance(tensor, list)
++             and all(torch.is_tensor(t) for t in tensor))):
++        raise TypeError(
++            f'tensor or list of tensors expected, got {type(tensor)}')
++
++    if torch.is_tensor(tensor):
++        tensor = [tensor]
++    result = []
++    for _tensor in tensor:
++        # Squeeze two times so that:
++        # 1. (1, 1, h, w) -> (h, w) or
++        # 3. (1, 3, h, w) -> (3, h, w) or
++        # 2. (n>1, 3/1, h, w) -> (n>1, 3/1, h, w)
++        _tensor = _tensor.squeeze(0).squeeze(0)
++        _tensor = _tensor.float().detach().cpu().clamp_(*min_max)
++        _tensor = (_tensor - min_max[0]) / (min_max[1] - min_max[0])
++        n_dim = _tensor.dim()
++        if n_dim == 4:
++            img_np = make_grid(
++                _tensor, nrow=int(math.sqrt(_tensor.size(0))),
++                normalize=False).numpy()
++            img_np = np.transpose(img_np[[2, 1, 0], :, :], (1, 2, 0))
++        elif n_dim == 3:
++            img_np = _tensor.numpy()
++            img_np = np.transpose(img_np[[2, 1, 0], :, :], (1, 2, 0))
++        elif n_dim == 2:
++            img_np = _tensor.numpy()
++        else:
++            raise ValueError('Only support 4D, 3D or 2D tensor. '
++                             f'But received with dimension: {n_dim}')
++        if out_type == np.uint8:
++            # Unlike MATLAB, numpy.unit8() WILL NOT round by default.
++            img_np = (img_np * 255.0).round()
++        img_np.astype(out_type)
++        result.append(img_np)
++    result = result[0] if len(result) == 1 else result
++    return result
++
++def reorder_image(img, input_order='HWC'):
++    """Reorder images to 'HWC' order.
++
++    If the input_order is (h, w), return (h, w, 1);
++    If the input_order is (c, h, w), return (h, w, c);
++    If the input_order is (h, w, c), return as it is.
++
++    Args:
++        img (ndarray): Input image.
++        input_order (str): Whether the input order is 'HWC' or 'CHW'.
++            If the input image shape is (h, w), input_order will not have
++            effects. Default: 'HWC'.
++
++    Returns:
++        ndarray: reordered image.
++    """
++
++    if input_order not in ['HWC', 'CHW']:
++        raise ValueError(
++            f'Wrong input_order {input_order}. Supported input_orders are '
++            '"HWC" and "CHW"')
++    if len(img.shape) == 2:
++        img = img[..., None]
++        return img
++    if input_order == 'CHW':
++        img = img.transpose(1, 2, 0)
++    return img
++
++def psnr(img1, img2, crop_border=0, input_order='HWC', convert_to=None):
++    """Calculate PSNR (Peak Signal-to-Noise Ratio).
++
++    Ref: https://en.wikipedia.org/wiki/Peak_signal-to-noise_ratio
++
++    Args:
++        img1 (ndarray): Images with range [0, 255].
++        img2 (ndarray): Images with range [0, 255].
++        crop_border (int): Cropped pixels in each edges of an image. These
++            pixels are not involved in the PSNR calculation. Default: 0.
++        input_order (str): Whether the input order is 'HWC' or 'CHW'.
++            Default: 'HWC'.
++        convert_to (str): Whether to convert the images to other color models.
++            If None, the images are not altered. When computing for 'Y',
++            the images are assumed to be in BGR order. Options are 'Y' and
++            None. Default: None.
++
++    Returns:
++        float: psnr result.
++    """
++
++    assert img1.shape == img2.shape, (
++        f'Image shapes are differnet: {img1.shape}, {img2.shape}.')
++    if input_order not in ['HWC', 'CHW']:
++        raise ValueError(
++            f'Wrong input_order {input_order}. Supported input_orders are '
++            '"HWC" and "CHW"')
++    img1 = reorder_image(img1, input_order=input_order)
++    img2 = reorder_image(img2, input_order=input_order)
++
++    img1, img2 = img1.astype(np.float32), img2.astype(np.float32)
++    if isinstance(convert_to, str) and convert_to.lower() == 'y':
++        img1 = mmcv.bgr2ycbcr(img1 / 255., y_only=True) * 255.
++        img2 = mmcv.bgr2ycbcr(img2 / 255., y_only=True) * 255.
++    elif convert_to is not None:
++        raise ValueError('Wrong color model. Supported values are '
++                         '"Y" and None.')
++
++    if crop_border != 0:
++        img1 = img1[crop_border:-crop_border, crop_border:-crop_border, None]
++        img2 = img2[crop_border:-crop_border, crop_border:-crop_border, None]
++
++    mse_value = np.mean((img1 - img2)**2)
++    if mse_value == 0:
++        # return float('inf')
++        return float(10e5)
++    return 20. * np.log10(255. / np.sqrt(mse_value))
++
++def _ssim(img1, img2):
++    """Calculate SSIM (structural similarity) for one channel images.
++
++    It is called by func:`calculate_ssim`.
++
++    Args:
++        img1, img2 (ndarray): Images with range [0, 255] with order 'HWC'.
++
++    Returns:
++        float: ssim result.
++    """
++
++    C1 = (0.01 * 255)**2
++    C2 = (0.03 * 255)**2
++
++    img1 = img1.astype(np.float64)
++    img2 = img2.astype(np.float64)
++    kernel = cv2.getGaussianKernel(11, 1.5)
++    window = np.outer(kernel, kernel.transpose())
++
++    mu1 = cv2.filter2D(img1, -1, window)[5:-5, 5:-5]
++    mu2 = cv2.filter2D(img2, -1, window)[5:-5, 5:-5]
++    mu1_sq = mu1**2
++    mu2_sq = mu2**2
++    mu1_mu2 = mu1 * mu2
++    sigma1_sq = cv2.filter2D(img1**2, -1, window)[5:-5, 5:-5] - mu1_sq
++    sigma2_sq = cv2.filter2D(img2**2, -1, window)[5:-5, 5:-5] - mu2_sq
++    sigma12 = cv2.filter2D(img1 * img2, -1, window)[5:-5, 5:-5] - mu1_mu2
++
++    ssim_map = ((2 * mu1_mu2 + C1) *
++                (2 * sigma12 + C2)) / ((mu1_sq + mu2_sq + C1) *
++                                       (sigma1_sq + sigma2_sq + C2))
++    return ssim_map.mean()
++
++
++def ssim(img1, img2, crop_border=0, input_order='HWC', convert_to=None):
++    """Calculate SSIM (structural similarity).
++
++    Ref:
++    Image quality assessment: From error visibility to structural similarity
++
++    The results are the same as that of the official released MATLAB code in
++    https://ece.uwaterloo.ca/~z70wang/research/ssim/.
++
++    For three-channel images, SSIM is calculated for each channel and then
++    averaged.
++
++    Args:
++        img1 (ndarray): Images with range [0, 255].
++        img2 (ndarray): Images with range [0, 255].
++        crop_border (int): Cropped pixels in each edges of an image. These
++            pixels are not involved in the SSIM calculation. Default: 0.
++        input_order (str): Whether the input order is 'HWC' or 'CHW'.
++            Default: 'HWC'.
++        convert_to (str): Whether to convert the images to other color models.
++            If None, the images are not altered. When computing for 'Y',
++            the images are assumed to be in BGR order. Options are 'Y' and
++            None. Default: None.
++
++    Returns:
++        float: ssim result.
++    """
++
++    assert img1.shape == img2.shape, (
++        f'Image shapes are differnet: {img1.shape}, {img2.shape}.')
++    if input_order not in ['HWC', 'CHW']:
++        raise ValueError(
++            f'Wrong input_order {input_order}. Supported input_orders are '
++            '"HWC" and "CHW"')
++    img1 = reorder_image(img1, input_order=input_order)
++    img2 = reorder_image(img2, input_order=input_order)
++
++    if isinstance(convert_to, str) and convert_to.lower() == 'y':
++        img1, img2 = img1.astype(np.float32), img2.astype(np.float32)
++        img1 = mmcv.bgr2ycbcr(img1 / 255., y_only=True) * 255.
++        img2 = mmcv.bgr2ycbcr(img2 / 255., y_only=True) * 255.
++        img1 = np.expand_dims(img1, axis=2)
++        img2 = np.expand_dims(img2, axis=2)
++    elif convert_to is not None:
++        raise ValueError('Wrong color model. Supported values are '
++                         '"Y" and None')
++
++    if crop_border != 0:
++        img1 = img1[crop_border:-crop_border, crop_border:-crop_border, None]
++        img2 = img2[crop_border:-crop_border, crop_border:-crop_border, None]
++
++    ssims = []
++    for i in range(img1.shape[2]):
++        ssims.append(_ssim(img1[..., i], img2[..., i]))
++    return np.array(ssims).mean()
++
++
++class BasicvsrMetrics(Metric):
++    def __init__(self,metrics_name,quantization=True):
++        self._metrics = metrics_name
++        self._results = dict()
++        self.allowed_metrics = {'PSNR': psnr, 'SSIM': ssim}
++        self.for_accuracy_aware_quantization = quantization
++        for metric in self._metrics:
++            assert metric in self.allowed_metrics, (
++                f'The metric:{metric} not in supported metrics:{self._metrics}')
++            self._results[metric]= []
++    
++    @property
++    def value(self):
++        results = dict()
++        for metric in self._metrics:
++            values_num = len(self._results[metric])
++            results[metric] = self._results[metric][values_num-1]
++        return results
++
++    @property
++    def avg_value(self):
++        results = dict()
++        for key in self._results.keys():
++            logger.info(f'metric {key}: {self._results[key]}')
++            results[key] = np.mean(self._results[key])
++        return results
++
++
++    def update(self, output, target,crop_border=0,convert_to=None):
++        """Calculte psnr and ssim metrics
++
++        Refer to: basicvsr.py:evaluate()
++
++        """
++        if self.for_accuracy_aware_quantization:
++            output = torch.from_numpy(output[0])  # dim=4: (n,c,h,w) # for accuracy-aware quantization
++            target = torch.from_numpy(target[0])
++        else:
++            output = torch.from_numpy(output)     # dim=5: (b,n,c,h,w) # for basicVSR_infer
++            target = torch.from_numpy(target)
++        for metric in self._metrics:
++            assert metric in self.allowed_metrics, (
++                f'The metric:{metric} not in supported metrics:{self._metrics}')
++            
++            if output.ndim == 5:  # a sequence: (n, t, c, h, w)
++                avg = []
++                for i in range(0, output.size(1)):
++                    output_i = tensor2img(output[:, i, :, :, :])
++                    gt_i = tensor2img(target[:, i, :, :, :])
++                    avg.append(self.allowed_metrics[metric](output_i, gt_i, crop_border, convert_to=convert_to))
++                self._results[metric].append(avg)
++
++            elif output.ndim == 4:  # an image: (n, c, h, w), for Vimeo-90K-T
++                output_img = tensor2img(output)
++                gt_img = tensor2img(target)
++                value = self.allowed_metrics[metric](
++                    output_img, gt_img, crop_border, convert_to=convert_to)
++                # self._results[metric] = value
++                self._results[metric].append(value)
++
++            else:
++                raise Exception('The metric cannot be calculated '
++                            'for a model with wrong output dims')
++        
++
++    def reset(self):
++        for metric in self._metrics:
++            assert metric in self.allowed_metrics, (
++                f'The metric:{metric} not in supported metrics:{self._metrics}')
++            self._results[metric]= []
++
++    def get_attributes(self):
++        return {'PSNR': {'direction': 'higher-better',
++                             'type': 'accuracy'},
++                'SSIM':{'direction':'higher-better',
++                             'type':'accuracy'}}
++
++    
++
+diff --git a/vsr_opt/samples/crop_restore_image.py b/vsr_opt/samples/crop_restore_image.py
+new file mode 100755
+index 0000000000..35a8e9aa41
+--- /dev/null
++++ b/vsr_opt/samples/crop_restore_image.py
+@@ -0,0 +1,335 @@
++import os
++from tqdm import tqdm
++import json
++import shutil
++from PIL import Image
++from joblib import Parallel, delayed
++import numpy as np
++import cv2 as cv
++def check_dir(path):
++    if not os.path.exists(path):
++        os.makedirs(path)
++from copy import deepcopy
++
++def is_image_file(filename):
++    return any(filename.endswith(extension) for extension in ['.jpg', '.JPG', '.jpeg', '.JPEG', '.png', '.PNG', ])
++
++
++def caulate_random_crop_coordinate(ori_size, crop_size, blocks):
++    [width, height] = ori_size   
++    [crop_width,crop_height] = crop_size
++    inter_width = (crop_width * blocks[0] - width) // (blocks[0] - 1)
++    last_fill_width = (crop_width * blocks[0] - width) % (blocks[0] - 1)
++    inter_height = (crop_height * blocks[1] - height) // (blocks[1] - 1)
++    last_fill_height = (crop_height * blocks[1] - height) % (blocks[1] - 1)
++    crop_coordinate_list = []
++    for i_ in range(blocks[0]):
++        for j_ in range(blocks[1]):
++            x1 = (crop_width - inter_width) * i_
++            y1 = (crop_height - inter_height) * j_
++            if i_ == blocks[0] - 1:
++                x1 = x1 - last_fill_width
++            if j_ == blocks[1] - 1:
++                y1 = y1 - last_fill_height
++            crop_coordinate_list.append((x1, y1, x1 + crop_width, y1 + crop_height))
++   return crop_coordinate_list,blocks
++
++
++def caulate_crop_coordinate(ori_size, crop_size, blocks):
++    [width, height] = ori_size 
++    inter_width = (crop_size * blocks[0] - width) // (blocks[0] - 1)
++    last_fill_width = (crop_size * blocks[0] - width) % (blocks[0] - 1)
++    inter_height = (crop_size * blocks[1] - height) // (blocks[1] - 1)
++    last_fill_height = (crop_size * blocks[1] - height) % (blocks[1] - 1)
++    crop_coordinate_list = []
++    for i_ in range(blocks[0]):
++        for j_ in range(blocks[1]):
++            x1 = (crop_size - inter_width) * i_
++            y1 = (crop_size - inter_height) * j_
++            if i_ == blocks[0] - 1:
++                x1 = x1 - last_fill_width
++            if j_ == blocks[1] - 1:
++                y1 = y1 - last_fill_height
++            crop_coordinate_list.append((x1, y1, x1 + crop_size, y1 + crop_size))
++    return crop_coordinate_list,blocks
++
++
++def caulate_crop_coordinate_padding(ori_size: list, crop_size: int, overlapp_size: list):
++    [width, height] = ori_size 
++    [overlapp_w, overlapp_h] = overlapp_size
++    block_w = (width - crop_size) / (crop_size - overlapp_w)
++    if block_w % 1 != 0:
++        block_w = int(block_w) + 2
++    else:
++        block_w = int(block_w) + 1
++    block_h = (height - crop_size) / (crop_size - overlapp_h)
++    if block_h % 1 != 0:
++        block_h = int(block_h) + 2
++    else:
++        block_h = int(block_h) + 1
++
++    if (height) <= crop_size:
++        block_h = 1
++    crop_coordinate_list = []
++    for i_ in range(block_w):
++        for j_ in range(block_h):
++            x1 = (crop_size - overlapp_w) * i_
++            y1 = (crop_size - overlapp_h) * j_
++            if (height) <= crop_size:
++                crop_coordinate_list.append((x1, 0, x1 + crop_size, height))
++            else:
++                crop_coordinate_list.append((x1, y1, x1 + crop_size, y1 + crop_size))
++
++    return crop_coordinate_list, [block_w, block_h]
++
++def crop_img(img_path, save_path, crop_size, blocks, overlapp_size=[0, 0], scale=1):
++    images_list = []
++
++    for img in os.listdir(img_path):
++        path = os.path.join(img_path, img)
++        images_list.append(path)
++
++    ori_size = Image.open(images_list[0]).size
++    ori_size = list(int(a / scale) for a in ori_size)
++
++    if overlapp_size[0] == 0:
++        crop_coordinate_list, cal_blocks = caulate_crop_coordinate(ori_size, crop_size, blocks)
++    else:
++        crop_coordinate_list, cal_blocks = caulate_crop_coordinate_padding(ori_size, crop_size, overlapp_size)
++
++    if overlapp_size[0] != 0:
++        save_path = os.path.join(save_path,
++                                 str(crop_size).zfill(3) + '_' + str(overlapp_size[0]) + '_' + str(overlapp_size[1]))
++    else:
++        save_path = os.path.join(save_path, str(crop_size).zfill(3) + '_' + str(blocks[0]) + '_' + str(blocks[1]))
++
++    check_dir(save_path)
++    crop_coordinate_list = [tuple(coo * scale for coo in corps) for corps in crop_coordinate_list]
++
++    for sequ in os.listdir(img_path):
++        for idx in range(len(crop_coordinate_list)):
++            check_dir(os.path.join(save_path, str(idx + 1).zfill(3), sequ))
++
++    def crop_img(croped_img_path):
++        img = Image.open(croped_img_path)
++        img_old_path, img_name = os.path.split(croped_img_path)
++        img_sequence = os.path.split(img_old_path)[-1]
++        for idx, coordinate in enumerate(crop_coordinate_list):
++            crooped = img.crop(coordinate)
++            save_img_path = os.path.join(save_path, str(idx + 1).zfill(3), img_sequence)
++            check_dir(save_img_path)
++            crooped.save(os.path.join(save_img_path, img_name))
++
++    for img_path in tqdm(images_list):
++       crop_img(img_path)
++
++
++def crop_images_to_patch(images,crop_size, blocks, overlapp_size=[0, 0], scale=1):
++    b,n,c,h,w = images.shape
++    ori_size = [h,w]
++    scale_size = list(int(a / scale) for a in ori_size)
++    if overlapp_size[0] == 0:
++        crop_coordinate_list, cal_blocks = caulate_crop_coordinate(scale_size, crop_size, blocks)
++    else:
++        crop_coordinate_list, cal_blocks = caulate_crop_coordinate_padding(scale_size, crop_size, overlapp_size)
++    crop_coordinate_list = [tuple(coo * scale for coo in corps) for corps in crop_coordinate_list]
++    def crop_img(image):
++        croped_list =[]
++        for idx, coordinate in enumerate(crop_coordinate_list):
++            cropped_img = images[:,:,:,coordinate[0]:coordinate[2],coordinate[1]:coordinate[3]]
++            _,_,_,c_h,c_w = cropped_img.shape
++            if c_h < crop_size or c_w < crop_size:
++                cropped = np.zeros((b,n,c,crop_size,crop_size))
++                cropped[:,:,:,:c_h,:c_w] = cropped[:,:,:,:c_h,:c_w] + cropped_img
++                cropped_img = cropped
++            croped_list.append(cropped_img)
++
++        return croped_list
++    
++    crop_list = crop_img(images)
++    return crop_list
++
++def crop_images_to_random_patch(images,crop_size, blocks, overlapp_size=[0, 0], scale=1):
++    b,n,c,h,w = images.shape
++    ori_size = [h,w]
++    scale_size = list(int(a / scale) for a in ori_size)
++    if overlapp_size[0] == 0:
++        crop_coordinate_list, cal_blocks = caulate_random_crop_coordinate(scale_size, crop_size, blocks)
++
++    else:
++        crop_coordinate_list, cal_blocks = caulate_crop_coordinate_padding(scale_size, crop_size, overlapp_size)
++    crop_coordinate_list = [tuple(coo * scale for coo in corps) for corps in crop_coordinate_list]
++    def crop_img(image):
++        croped_list =[]
++        for idx, coordinate in enumerate(crop_coordinate_list):
++            cropped_img = images[:,:,:,coordinate[0]:coordinate[2],coordinate[1]:coordinate[3]]
++            _,_,_,c_h,c_w = cropped_img.shape
++            if c_h < crop_size[0] or c_w < crop_size[1]:
++                cropped = np.zeros((b,n,c,crop_size[0],crop_size[1]))
++                cropped[:,:,:,:c_h,:c_w] = cropped[:,:,:,:c_h,:c_w] + cropped_img
++                cropped_img = cropped
++            croped_list.append(cropped_img)
++
++        return croped_list
++    
++    crop_list = crop_img(images)
++    return crop_list
++
++
++def restore_crop_(img_path, save_path, ori_size: list, crop_size: int, blocks, padding=0, scales=1):
++    import pdb;pdb.set_trace()
++    if padding == 0:
++        crop_coordinate_list = caulate_crop_coordinate(ori_size, crop_size, blocks)
++    else:
++        padding = [padding,padding] 
++        crop_coordinate_list,cal_blocks = caulate_crop_coordinate_padding(ori_size, crop_size, padding)
++    crop_coordinate_list = [tuple(coo * scales for coo in corps) for corps in crop_coordinate_list]
++
++    print(crop_coordinate_list)
++
++    img_crop_sequ = os.listdir(img_path)
++    img_crop_sequ.sort(key=lambda x: int(x))
++    img_folder_sequ = os.listdir(os.path.join(img_path, img_crop_sequ[0]))
++    img_folder_sequ = [os.path.join(img_crop_path, img_folder_sequ[0]) for img_crop_path in img_crop_sequ]  
++    for folder in img_folder_sequ:
++        save_sequ_path = os.path.join(save_path, folder)
++        check_dir(save_sequ_path)
++
++    def restore_crop_img(img_restore_list, save_img_path):
++        resotre_size_w = ori_size[0] * scales
++        resotre_size_h = ori_size[1] * scales
++        output_img = np.zeros((resotre_size_h, resotre_size_w, 3), dtype=int)
++        add_nums_np = np.zeros((resotre_size_h, resotre_size_w, 3), dtype=int)
++        crop_img_size = crop_size * scales
++        for img_idx, img_crop_path in enumerate(img_restore_list):
++            teplate_add = np.ones((crop_img_size, crop_img_size, 3), dtype=int)
++            coodinate = crop_coordinate_list[img_idx]
++            img = Image.open(img_crop_path)
++            img_np = np.array(img)
++            print(f'Image patch size:{img_np.shape}')
++            if coodinate[2] > resotre_size_w:
++                img_np = img_np[:, :-(coodinate[2] - resotre_size_w), :]
++                teplate_add = teplate_add[:, :-(coodinate[2] - resotre_size_w), :]
++            if coodinate[3] > resotre_size_h:
++                img_np = img_np[:-(coodinate[3] - resotre_size_h), :, :]
++                teplate_add = teplate_add[:-(coodinate[3] - resotre_size_h), :, :]
++
++            output_img[coodinate[1]:coodinate[3], coodinate[0]:coodinate[2], :] += img_np
++            add_nums_np[coodinate[1]:coodinate[3], coodinate[0]:coodinate[2], :] += teplate_add
++
++        img_result = np.divide(output_img, add_nums_np)
++
++        img = Image.fromarray(img_result.astype('uint8')).convert('RGB')
++        
++        img.save(save_img_path)
++
++    fname_imgs_list = []
++
++    for root, _, fnames in os.walk(os.path.join(img_path, img_folder_sequ[0])):
++        for fname in fnames:
++            if 'png' in fname:
++                fname_imgs_list.append(os.path.join(root, fname))
++
++    def parllel_crop(single_img_path):
++        root, fname = os.path.split(single_img_path)
++        sequ_name = os.path.split(root)[-1]
++        save_sequ_path = os.path.join(save_path, sequ_name)
++        check_dir(save_sequ_path) 
++        img_restore_list = []
++        for crop_sequ in img_crop_sequ:
++            img_restore_list.append(os.path.join(img_path, crop_sequ, sequ_name, fname))
++        restore_crop_img(img_restore_list, os.path.join(save_sequ_path, fname))
++
++    
++    for file_ in tqdm(fname_imgs_list):
++        parllel_crop(file_)
++   
++
++def restore_crop_from_patch(patch_list, ori_size: list, crop_size: int, blocks, padding=0, scales=1):
++    if padding == 0:
++        crop_coordinate_list,cal_blocks = caulate_crop_coordinate(ori_size, crop_size, blocks)
++    else:
++        padding = [padding,padding] 
++        crop_coordinate_list,cal_blocks = caulate_crop_coordinate_padding(ori_size, crop_size, padding)
++    crop_coordinate_list = [tuple(coo * scales for coo in corps) for corps in crop_coordinate_list]
++    def restore_crop_img(img_restore_list):
++        b,n,c,_,_= img_restore_list[0].shape
++        restore_size_h = ori_size[0] * scales 
++        restore_size_w = ori_size[1] * scales  
++        output_img = np.zeros((b,n,c,restore_size_h, restore_size_w), dtype=np.float32)
++        add_nums_np = np.zeros((b,n,c,restore_size_h, restore_size_w), dtype=np.float32)
++        crop_img_size = crop_size * scales
++        for img_idx, img_crop in enumerate(img_restore_list):
++            teplate_add = np.ones((b,n,c,crop_img_size, crop_img_size), dtype=np.float32)
++            coordinate = crop_coordinate_list[img_idx]
++            if coordinate[3] > restore_size_w:
++                img_crop = img_crop[:,:,:, :,:-(coordinate[3] - restore_size_w)]
++                teplate_add = teplate_add[:,:,:,:,:-(coordinate[3] - restore_size_w)]
++            if coordinate[2] > restore_size_h:
++                img_crop = img_crop[:,:,:,:-(coordinate[2] - restore_size_h),:]
++                teplate_add = teplate_add[:,:,:,:-(coordinate[2] - restore_size_h),:]
++
++            output_img[:,:,:,coordinate[0]:coordinate[2], coordinate[1]:coordinate[3]] += img_crop
++            add_nums_np[:,:,:,coordinate[0]:coordinate[2], coordinate[1]:coordinate[3]] += teplate_add
++
++        np.place(add_nums_np,add_nums_np==0,[1])
++        img_result = np.divide(output_img, add_nums_np)
++        return img_result
++
++def restore_random_crop_from_patch(patch_list, ori_size: list, crop_size: int, blocks, padding=0, scales=1):
++    if padding == 0:
++        crop_coordinate_list,cal_blocks = caulate_random_crop_coordinate(ori_size, crop_size, blocks)
++    else:
++        padding = [padding,padding] 
++        crop_coordinate_list,cal_blocks = caulate_crop_coordinate_padding(ori_size, crop_size, padding)
++    crop_coordinate_list = [tuple(coo * scales for coo in corps) for corps in crop_coordinate_list]
++
++    def restore_crop_img(img_restore_list):
++        b,n,c,_,_= img_restore_list[0].shape
++        restore_size_h = ori_size[0] * scales  
++        restore_size_w = ori_size[1] * scales  
++        output_img = np.zeros((b,n,c,restore_size_h, restore_size_w), dtype=np.float32)
++        add_nums_np = np.zeros((b,n,c,restore_size_h, restore_size_w), dtype=np.float32)
++        crop_img_size = crop_size * scales
++        for img_idx, img_crop in enumerate(img_restore_list):
++            teplate_add = np.ones((b,n,c,crop_img_size[0], crop_img_size[1]), dtype=np.float32)
++            coordinate = crop_coordinate_list[img_idx]
++            if coordinate[3] > restore_size_w:
++                img_crop = img_crop[:,:,:, :,:-(coordinate[3] - restore_size_w)]
++                teplate_add = teplate_add[:,:,:,:,:-(coordinate[3] - restore_size_w)]
++            if coordinate[2] > restore_size_h:
++                img_crop = img_crop[:,:,:,:-(coordinate[2] - restore_size_h),:]
++                teplate_add = teplate_add[:,:,:,:-(coordinate[2] - restore_size_h),:]
++
++            output_img[:,:,:,coordinate[0]:coordinate[2], coordinate[1]:coordinate[3]] += img_crop
++            add_nums_np[:,:,:,coordinate[0]:coordinate[2], coordinate[1]:coordinate[3]] += teplate_add
++
++        np.place(add_nums_np,add_nums_np==0,[1])
++        img_result = np.divide(output_img, add_nums_np)
++        return img_result
++
++    restored_results = restore_crop_img(patch_list)
++    return restored_results
++
++    
++
++from basicvsr_metrics import psnr,ssim
++if __name__ == '__main__':
++    test_img = './dataset/reds/LR/000/00000000.png'
++    image = cv.cvtColor(cv.imread(test_img), cv.COLOR_BGR2RGB)
++    input_image = np.transpose(image, (2, 0, 1))
++    input_image = np.expand_dims(input_image,0)
++    input_image = np.expand_dims(input_image,0)
++    crop_list = crop_images_to_random_patch(input_image,[190,340], [2,2], overlapp_size=[0, 0], scale=1)
++    output = restore_random_crop_from_patch(crop_list, ori_size=[360,640], crop_size=[190,340], blocks=[2,2], padding=0, scales=1)
++    output_img = output.squeeze().squeeze()
++    output_img = np.transpose(output_img, (1, 2, 0))
++    psnr_ = psnr(image,output_img)
++    ssim_ = ssim(image,output_img)
++    print(f'psnr:{psnr_}, ssim:{ssim_}')
++    output_img = cv.cvtColor(output_img,cv.COLOR_RGB2BGR)
++
++    cv.imwrite('../test_LR_0.png',output_img)
++
++    
++    
+\ No newline at end of file
+diff --git a/vsr_opt/samples/quantization_basicvsr.py b/vsr_opt/samples/quantization_basicvsr.py
+new file mode 100755
+index 0000000000..ef5b085398
+--- /dev/null
++++ b/vsr_opt/samples/quantization_basicvsr.py
+@@ -0,0 +1,149 @@
++#!/usr/bin/env python
++# coding=utf-8
++import os
++import sys
++from openvino.tools.pot import IEEngine
++from openvino.tools.pot import load_model,save_model
++from openvino.tools.pot import compress_model_weights
++from openvino.tools.pot import create_pipeline
++from basicvsr_metrics import BasicvsrMetrics
++import argparse
++
++from openvino.tools.pot.utils.logger import init_logger,get_logger
++init_logger(level='INFO')
++logger = get_logger(__name__)
++
++from quantization_dataloader import FramesLoader
++
++def parse_args():
++    parser = argparse.ArgumentParser(description='Model Inference')
++    parser.add_argument(
++        '--model_path',
++        default='./models',
++        type=str,
++        help='Need.= Path to store onnx model') 
++    parser.add_argument(
++        '--model_name',
++        default='input_1_5_3_1080_1920',
++        type=str,
++        help='Need. Model name')
++    parser.add_argument(
++        '--dataset_path',
++        default='./dataset/cuc/',
++        type=str,
++        help='Need. Dataset path')
++    parser.add_argument(
++        '--sub_folders',
++        default='000',
++        type=str,
++        help='Need. Sub-folder of datasets for inference')
++    parser.add_argument(
++        '--nif',
++        default=3,
++        type=int,
++        help='Need. Number of input frames')  
++    parser.add_argument(
++        '--accuracy_aware_quantization',
++        action='store_true', 
++        help='Optional. Quantize by accuracy aware algorithm,otherwise by default algorithm')  
++    parser.add_argument(
++        '--extension',
++        default='',
++        type=str,
++        help='Optional. Extension path for custom operation')
++    args = parser.parse_args()
++    return args
++
++def main():
++    args = parse_args()
++    dataset_path = args.dataset_path
++    sub_folders = args.sub_folders
++    model_path = args.model_path
++    xml_model = args.model_name + '.xml'
++    bin_model = args.model_name + '.bin'
++    num_input_frames = args.nif
++    model_config = {
++        "model_name": "basicvsr",
++        "model": os.path.join(model_path,xml_model),
++        "weights": os.path.join(model_path,bin_model),
++
++    }
++
++    engine_config = {"device": "CPU",
++        'stat_requests_number':1,
++        'eval_requests_number':1
++    }
++    algorithms = []
++    name_prex = ""
++    # AccuracyAwareQuantization
++    if args.accuracy_aware_quantization:
++        algorithms = [
++            {
++                "name": "AccuracyAwareQuantization",
++                "params": {
++                    "target_device": "CPU",
++                    "stat_subset_size": 10,  # for default algorithm
++                    "ranking_subset_size":10,
++                    "max_iter_num":100,
++                    "maximal_drop":0.01,
++                    "drop_type":"relative"
++                },
++            }
++        ]
++        name_prex = "optimized_acc_aware_"
++
++    # DefaultQuantization
++    else:
++        algorithms = [
++            {
++                "name": "DefaultQuantization",
++                "params": {
++                    "target_device": "CPU",
++                    "stat_subset_size": 10,  # for default algorithm
++                },
++            }
++        ]
++        name_prex = "optimized_"
++
++    metrics = ['PSNR','SSIM']
++    # Step 1: Implement data loader
++    data_loader = FramesLoader(dataset_path,sub_folder=sub_folders,num_input_frames=num_input_frames,need_gt=args.accuracy_aware_quantization)  
++    logger.info(f'Dataset path{dataset_path}')
++    logger.info(f'Model to be quantized:{xml_model}')
++
++    # Step 2: Load model
++    model = load_model(model_config=model_config)
++
++    # Step 3: Initialize the engine
++    if args.accuracy_aware_quantization:
++        # Implement Metric
++        metric = BasicvsrMetrics(metrics)
++        engine = IEEngine(config=engine_config, data_loader=data_loader,metric=metric) # accuarcy aware
++    else:
++        engine = IEEngine(config=engine_config, data_loader=data_loader) # Default
++
++    # load extension
++    if args.extension:
++        logger.info(f'Add custom layer extension:{args.extension}')
++        engine._ie.add_extension(args.extension)
++
++    # Step 4: Create pipeline
++    logger.info('Create pipeline and run:')
++    pipeline = create_pipeline(algorithms,engine)
++    compressed_model = pipeline.run(model=model)
++
++    logger.info('Finished pipeline running, begin to compress model weights:')
++
++    # Step 5: Compress model weights to quantized precision
++    compress_model_weights(compressed_model)
++
++    # Step 6: Save the compressed model to desired path
++    logger.info('Finished model weoghts compress, begin to save model')
++    compressed_model_paths = save_model(model=compressed_model,
++                                    save_path = model_path,
++                                        model_name = name_prex + args.model_name
++                                    )
++
++if __name__ == '__main__':
++    main()
++
+diff --git a/vsr_opt/samples/quantization_dataloader.py b/vsr_opt/samples/quantization_dataloader.py
+new file mode 100755
+index 0000000000..8f4c811a4e
+--- /dev/null
++++ b/vsr_opt/samples/quantization_dataloader.py
+@@ -0,0 +1,100 @@
++#!/usr/bin/env python
++# coding=utf-8
++import os
++import numpy as np
++import cv2 as cv
++
++from openvino.tools.pot import DataLoader
++
++class FramesLoader(DataLoader):
++    """ Loads images from a folder """
++    def __init__(self,dataset_path,LR_or_HR=['LR','HR'],sub_folder='',num_input_frames =3,need_gt=True):
++        self._lq_files=[]
++        self._gt_files=[]
++        self._input_frames = num_input_frames
++        self.sub_folder = sub_folder.split(',')
++        if 'LR' in LR_or_HR:
++            folder_path = os.path.join(dataset_path,'LR')
++            self._lq_files = self.get_file_path(folder_path,self.sub_folder)
++
++        if 'HR' in LR_or_HR:
++            folder_path = os.path.join(dataset_path,'HR')
++            self._gt_files = self.get_file_path(folder_path,self.sub_folder)
++
++        self.need_gt = need_gt
++
++    def get_file_path(self,dataset_path,sub_folders):
++        files = []
++        all_dirs = os.listdir(dataset_path)
++        
++        if not isinstance(sub_folders,list):
++            sub_folders = [sub_folders]
++
++        for sub_folder in sub_folders:
++            file_dir = os.path.join(dataset_path,sub_folder)
++            all_file_in_dir = os.listdir(file_dir)
++            all_file_in_dir.sort(key=lambda x:int(x.split('.')[0]))
++            if len(all_file_in_dir) > 100:
++                all_file_in_dir = all_file_in_dir[:100]
++            for name in all_file_in_dir:
++                file_path = os.path.join(file_dir,name)
++                if cv.haveImageReader(file_path):
++                    files.append(file_path)
++        return files
++
++    def __len__(self):
++        """ Returns the length of the dataset """
++        return len(self._lq_files)//self._input_frames
++
++    
++    def getImage(self,filepath):
++        image = cv.cvtColor(cv.imread(filepath), cv.COLOR_BGR2RGB)
++        
++        input_image = np.transpose(image, (2, 0, 1))
++
++        return input_image
++
++
++    def __getitem__(self,index):
++        """ Returns frames by index in the NCHW layout """
++        if self._gt_files== None and self._lq_files == None:
++            return None,None
++        
++        image_list = []
++        gt_list = []
++        for id in range(self._input_frames):
++            image_index = index*self._input_frames + id
++            image_path = self._lq_files[image_index]
++            image = self.getImage(image_path)
++            image_list.append(image)
++        inputframes = np.array(image_list)
++        inputframes = np.expand_dims(inputframes,0)
++        inputframes = inputframes.astype(np.float32)/255.   # normalize
++
++        if self.need_gt == True:
++            for id in range(self._input_frames):
++                image_index = index*self._input_frames + id
++                image_path = self._gt_files[image_index]
++                image = self.getImage(image_path)
++                gt_list.append(image)
++            gtframes = np.array(gt_list)
++            gtframes = np.expand_dims(gtframes,0)
++            gtframes = gtframes.astype(np.float32)/255.
++            return inputframes,gtframes  # AccuracyawareQuantization, cross check
++        
++        return inputframes,None  # DefaultQuantization
++
++
++
++if __name__ == '__main__':
++    dataset_path = './basicvsr/dataset/reds/'
++    data_folder = ['000','011','015','020']   
++    import pdb;pdb.set_trace()
++    dataloader = FramesLoader(dataset_path,['LR','HR'],data_folder)
++    data,gt = dataloader.__getitem__(1)
++    print(f'input data shape:{data.shape}')
++    print(f'gt data shape:{gt.shape}')
++
++
++
++
+diff --git a/vsr_opt/tools/pytorch2onnx.py b/vsr_opt/tools/pytorch2onnx.py
+new file mode 100644
+index 0000000000..7ebce5d70c
+--- /dev/null
++++ b/vsr_opt/tools/pytorch2onnx.py
+@@ -0,0 +1,46 @@
++import torch
++import argparse
++
++def parse_args():
++    parser = argparse.ArgumentParser(description='Pytorch model to ONNX model')
++    parser.add_argument(
++        '--input_model',
++        default=None,
++        type=str,
++        help='Pytorch model file')
++    parser.add_argument(
++        '--output_dir',
++        default='./',
++        type=str,
++        help='Path to store ONNX model file')
++    args = parser.parse_args()
++    return args
++
++def main(args):
++    model = torch.load(args.input_model,map_location=torch.device('cpu'))
++    model_name = args.input_model.split('/')[-1].split('.')[0]
++    output_model = args.output_dir + '.onnx'
++    import pdb;pdb.set_trace()
++    model.cpu().eval()
++    data = torch.randn([1,3,3,1080,1920])
++    script_model = torch.jit.trace(model,data)
++    freeze_model = torch.jit.freeze(script_model,preserved_attrs=["training"])
++    with torch.no_grad():
++        torch.onnx.export(
++            freeze_model,
++            data,
++            os.path.join(args.output_dir,output_model),
++            input_names=['input'],
++            output_names=['output'],
++            export_params=True,
++            keep_initializers_as_inputs=False,
++            verbose=show,
++            # training = TrainingMode.EVAL,  # @longkun
++            opset_version=12,
++            dynamic_axes=dynamic_axes,
++            do_constant_folding=True)
++    print(f'Successfully exported ONNX model: {output_file}')
++
++if __name__ == '__main__':
++    args = parse_args()
++    main(args)
+\ No newline at end of file
+diff --git a/vsr_opt/tools/quantization.py b/vsr_opt/tools/quantization.py
+new file mode 100644
+index 0000000000..c5455317ba
+--- /dev/null
++++ b/vsr_opt/tools/quantization.py
+@@ -0,0 +1,517 @@
++import os
++import torch
++import numpy as np
++import argparse
++
++from torchvision.utils import make_grid
++from openvino.tools.pot import IEEngine
++from openvino.tools.pot import load_model,save_model
++from openvino.tools.pot import compress_model_weights
++from openvino.tools.pot import create_pipeline
++from openvino.tools.pot import DataLoader
++from openvino.tools.pot import Metric
++import math
++import cv2
++# import mmcv
++import math
++
++from openvino.tools.pot.utils.logger import init_logger,get_logger
++init_logger(level='INFO')
++logger = get_logger(__name__)
++
++def tensor2img(tensor, out_type=np.uint8, min_max=(0, 1)):
++    """Convert torch Tensors into image numpy arrays. from: mmedit/core/misc.py
++
++    After clamping to (min, max), image values will be normalized to [0, 1].
++
++    For differnet tensor shapes, this function will have different behaviors:
++
++        1. 4D mini-batch Tensor of shape (N x 3/1 x H x W):
++            Use `make_grid` to stitch images in the batch dimension, and then
++            convert it to numpy array.
++        2. 3D Tensor of shape (3/1 x H x W) and 2D Tensor of shape (H x W):
++            Directly change to numpy array.
++
++    Note that the image channel in input tensors should be RGB order. This
++    function will convert it to cv2 convention, i.e., (H x W x C) with BGR
++    order.
++
++    Args:
++        tensor (Tensor | list[Tensor]): Input tensors.
++        out_type (numpy type): Output types. If ``np.uint8``, transform outputs
++            to uint8 type with range [0, 255]; otherwise, float type with
++            range [0, 1]. Default: ``np.uint8``.
++        min_max (tuple): min and max values for clamp.
++
++    Returns:
++        (Tensor | list[Tensor]): 3D ndarray of shape (H x W x C) or 2D ndarray
++        of shape (H x W).
++    """
++    if not (torch.is_tensor(tensor) or
++            (isinstance(tensor, list)
++             and all(torch.is_tensor(t) for t in tensor))):
++        raise TypeError(
++            f'tensor or list of tensors expected, got {type(tensor)}')
++
++    if torch.is_tensor(tensor):
++        tensor = [tensor]
++    result = []
++    for _tensor in tensor:
++        # Squeeze two times so that:
++        # 1. (1, 1, h, w) -> (h, w) or
++        # 3. (1, 3, h, w) -> (3, h, w) or
++        # 2. (n>1, 3/1, h, w) -> (n>1, 3/1, h, w)
++        _tensor = _tensor.squeeze(0).squeeze(0)
++        _tensor = _tensor.float().detach().cpu().clamp_(*min_max)
++        _tensor = (_tensor - min_max[0]) / (min_max[1] - min_max[0])
++        n_dim = _tensor.dim()
++        if n_dim == 4:
++            img_np = make_grid(
++                _tensor, nrow=int(math.sqrt(_tensor.size(0))),
++                normalize=False).numpy()
++            img_np = np.transpose(img_np[[2, 1, 0], :, :], (1, 2, 0))
++        elif n_dim == 3:
++            img_np = _tensor.numpy()
++            img_np = np.transpose(img_np[[2, 1, 0], :, :], (1, 2, 0))
++        elif n_dim == 2:
++            img_np = _tensor.numpy()
++        else:
++            raise ValueError('Only support 4D, 3D or 2D tensor. '
++                             f'But received with dimension: {n_dim}')
++        if out_type == np.uint8:
++            img_np = (img_np * 255.0).round()
++        img_np.astype(out_type)
++        result.append(img_np)
++    result = result[0] if len(result) == 1 else result
++    return result
++
++def psnr(img1, img2, crop_border=0, input_order='HWC', convert_to=None):
++    """Calculate PSNR (Peak Signal-to-Noise Ratio).
++
++    Ref: https://en.wikipedia.org/wiki/Peak_signal-to-noise_ratio
++
++    Args:
++        img1 (ndarray): Images with range [0, 255].
++        img2 (ndarray): Images with range [0, 255].
++        crop_border (int): Cropped pixels in each edges of an image. These
++            pixels are not involved in the PSNR calculation. Default: 0.
++        input_order (str): Whether the input order is 'HWC' or 'CHW'.
++            Default: 'HWC'.
++        convert_to (str): Whether to convert the images to other color models.
++            If None, the images are not altered. When computing for 'Y',
++            the images are assumed to be in BGR order. Options are 'Y' and
++            None. Default: None.
++
++    Returns:
++        float: psnr result.
++    """
++
++    assert img1.shape == img2.shape, (
++        f'Image shapes are differnet: {img1.shape}, {img2.shape}.')
++    if input_order not in ['HWC', 'CHW']:
++        raise ValueError(
++            f'Wrong input_order {input_order}. Supported input_orders are '
++            '"HWC" and "CHW"')
++    img1 = reorder_image(img1, input_order=input_order)
++    img2 = reorder_image(img2, input_order=input_order)
++
++    img1, img2 = img1.astype(np.float32), img2.astype(np.float32)
++    if isinstance(convert_to, str) and convert_to.lower() == 'y':
++        # img1 = mmcv.bgr2ycbcr(img1 / 255., y_only=True) * 255.
++        # img2 = mmcv.bgr2ycbcr(img2 / 255., y_only=True) * 255.
++        img1 = cv.cvtColor(	img1 / 255,cv2.COLOR_BGR2YCrCb) * 255.
++        img2 = cv.cvtColor(	img2 / 255,cv2.COLOR_BGR2YCrCb) * 255.
++    elif convert_to is not None:
++        raise ValueError('Wrong color model. Supported values are '
++                         '"Y" and None.')
++
++    if crop_border != 0:
++        img1 = img1[crop_border:-crop_border, crop_border:-crop_border, None]
++        img2 = img2[crop_border:-crop_border, crop_border:-crop_border, None]
++
++    mse_value = np.mean((img1 - img2)**2)
++    if mse_value == 0:
++        # return float('inf')
++        return float(10e5)
++    return 20. * np.log10(255. / np.sqrt(mse_value))
++
++def _ssim(img1, img2):
++    """Calculate SSIM (structural similarity) for one channel images.
++
++    It is called by func:`calculate_ssim`.
++
++    Args:
++        img1, img2 (ndarray): Images with range [0, 255] with order 'HWC'.
++
++    Returns:
++        float: ssim result.
++    """
++
++    C1 = (0.01 * 255)**2
++    C2 = (0.03 * 255)**2
++
++    img1 = img1.astype(np.float64)
++    img2 = img2.astype(np.float64)
++    kernel = cv2.getGaussianKernel(11, 1.5)
++    window = np.outer(kernel, kernel.transpose())
++
++    mu1 = cv2.filter2D(img1, -1, window)[5:-5, 5:-5]
++    mu2 = cv2.filter2D(img2, -1, window)[5:-5, 5:-5]
++    mu1_sq = mu1**2
++    mu2_sq = mu2**2
++    mu1_mu2 = mu1 * mu2
++    sigma1_sq = cv2.filter2D(img1**2, -1, window)[5:-5, 5:-5] - mu1_sq
++    sigma2_sq = cv2.filter2D(img2**2, -1, window)[5:-5, 5:-5] - mu2_sq
++    sigma12 = cv2.filter2D(img1 * img2, -1, window)[5:-5, 5:-5] - mu1_mu2
++
++    ssim_map = ((2 * mu1_mu2 + C1) *
++                (2 * sigma12 + C2)) / ((mu1_sq + mu2_sq + C1) *
++                                       (sigma1_sq + sigma2_sq + C2))
++    return ssim_map.mean()
++
++
++def ssim(img1, img2, crop_border=0, input_order='HWC', convert_to=None):
++    """Calculate SSIM (structural similarity).
++
++    Ref:
++    Image quality assessment: From error visibility to structural similarity
++
++    The results are the same as that of the official released MATLAB code in
++    https://ece.uwaterloo.ca/~z70wang/research/ssim/.
++
++    For three-channel images, SSIM is calculated for each channel and then
++    averaged.
++
++    Args:
++        img1 (ndarray): Images with range [0, 255].
++        img2 (ndarray): Images with range [0, 255].
++        crop_border (int): Cropped pixels in each edges of an image. These
++            pixels are not involved in the SSIM calculation. Default: 0.
++        input_order (str): Whether the input order is 'HWC' or 'CHW'.
++            Default: 'HWC'.
++        convert_to (str): Whether to convert the images to other color models.
++            If None, the images are not altered. When computing for 'Y',
++            the images are assumed to be in BGR order. Options are 'Y' and
++            None. Default: None.
++
++    Returns:
++        float: ssim result.
++    """
++
++    assert img1.shape == img2.shape, (
++        f'Image shapes are differnet: {img1.shape}, {img2.shape}.')
++    if input_order not in ['HWC', 'CHW']:
++        raise ValueError(
++            f'Wrong input_order {input_order}. Supported input_orders are '
++            '"HWC" and "CHW"')
++    img1 = reorder_image(img1, input_order=input_order)
++    img2 = reorder_image(img2, input_order=input_order)
++
++    if isinstance(convert_to, str) and convert_to.lower() == 'y':
++        img1, img2 = img1.astype(np.float32), img2.astype(np.float32)
++        # img1 = mmcv.bgr2ycbcr(img1 / 255., y_only=True) * 255.
++        # img2 = mmcv.bgr2ycbcr(img2 / 255., y_only=True) * 255.
++        img1 = cv.cvtColor(	img1 / 255,cv2.COLOR_BGR2YCrCb) * 255.
++        img2 = cv.cvtColor(	img2 / 255,cv2.COLOR_BGR2YCrCb) * 255.
++        img2 = cv2.COLOR_BGR2YCrCb()
++        img1 = np.expand_dims(img1, axis=2)
++        img2 = np.expand_dims(img2, axis=2)
++    elif convert_to is not None:
++        raise ValueError('Wrong color model. Supported values are '
++                         '"Y" and None')
++
++    if crop_border != 0:
++        img1 = img1[crop_border:-crop_border, crop_border:-crop_border, None]
++        img2 = img2[crop_border:-crop_border, crop_border:-crop_border, None]
++
++    ssims = []
++    for i in range(img1.shape[2]):
++        ssims.append(_ssim(img1[..., i], img2[..., i]))
++    return np.array(ssims).mean()
++
++
++class QuantizationLoader(DataLoader):
++    """ Loads images from a folder """
++    def __init__(self,dataset_path,LR_or_HR=['LR','HR'],sub_folder='',num_input_frames =3,need_gt=True):
++        self._lq_files=[]
++        self._gt_files=[]
++        self._input_frames = num_input_frames
++        self.sub_folder = sub_folder.split(',')
++        if 'LR' in LR_or_HR:
++            folder_path = os.path.join(dataset_path,'LR')
++            self._lq_files = self.get_file_path(folder_path,self.sub_folder)
++
++        if 'HR' in LR_or_HR:
++            folder_path = os.path.join(dataset_path,'HR')
++            self._gt_files = self.get_file_path(folder_path,self.sub_folder)
++
++        self.need_gt = need_gt
++
++    def get_file_path(self,dataset_path,sub_folders):
++        files = []
++        all_dirs = os.listdir(dataset_path)
++        
++        if not isinstance(sub_folders,list):
++            sub_folders = [sub_folders]
++
++        for sub_folder in sub_folders:
++            file_dir = os.path.join(dataset_path,sub_folder)
++            all_file_in_dir = os.listdir(file_dir)
++            all_file_in_dir.sort(key=lambda x:int(x.split('.')[0]))
++            if len(all_file_in_dir) > 100:
++                all_file_in_dir = all_file_in_dir[:100]
++            for name in all_file_in_dir:
++                file_path = os.path.join(file_dir,name)
++                if cv2.haveImageReader(file_path):
++                    files.append(file_path)
++        return files
++
++    def __len__(self):
++        """ Returns the length of the dataset """
++        return len(self._lq_files)//self._input_frames
++
++    
++    def getImage(self,filepath):
++        image = cv2.cvtColor(cv2.imread(filepath), cv2.COLOR_BGR2RGB)
++        
++        input_image = np.transpose(image, (2, 0, 1))
++
++        return input_image
++
++
++    def __getitem__(self,index):
++        """ Returns frames by index in the NCHW layout """
++        if self._gt_files== None and self._lq_files == None:
++            return None,None
++        
++        image_list = []
++        gt_list = []
++        for id in range(self._input_frames):
++            image_index = index*self._input_frames + id
++            image_path = self._lq_files[image_index]
++            image = self.getImage(image_path)
++            image_list.append(image)
++        inputframes = np.array(image_list)
++        inputframes = np.expand_dims(inputframes,0)
++        inputframes = inputframes.astype(np.float32)/255.   # normalize
++
++        if self.need_gt == True:
++            for id in range(self._input_frames):
++                image_index = index*self._input_frames + id
++                image_path = self._gt_files[image_index]
++                image = self.getImage(image_path)
++                gt_list.append(image)
++            gtframes = np.array(gt_list)
++            gtframes = np.expand_dims(gtframes,0)
++            gtframes = gtframes.astype(np.float32)/255.
++            return inputframes,gtframes  # AccuracyawareQuantization, cross check
++        
++        return inputframes,None  # DefaultQuantization
++
++class BasicvsrMetrics(Metric):
++    def __init__(self,metrics_name,quantization=True):
++        self._metrics = metrics_name
++        self._results = dict()
++        self.allowed_metrics = {'PSNR': psnr, 'SSIM': ssim}
++        self.for_accuracy_aware_quantization = quantization
++        for metric in self._metrics:
++            assert metric in self.allowed_metrics, (
++                f'The metric:{metric} not in supported metrics:{self._metrics}')
++            self._results[metric]= []
++    
++    @property
++    def value(self):
++        results = dict()
++        for metric in self._metrics:
++            values_num = len(self._results[metric])
++            results[metric] = self._results[metric][values_num-1]
++        return results
++
++    @property
++    def avg_value(self):
++        results = dict()
++        for key in self._results.keys():
++            logger.info(f'metric {key}: {self._results[key]}')
++            results[key] = np.mean(self._results[key])
++        return results
++
++
++    def update(self, output, target,crop_border=0,convert_to=None):
++        """Calculte psnr and ssim metrics
++
++        Refer to: basicvsr.py:evaluate()
++
++        """
++        if self.for_accuracy_aware_quantization:
++            output = torch.from_numpy(output[0])  # dim=4: (n,c,h,w) # for accuracy-aware quantization
++            target = torch.from_numpy(target[0])
++        else:
++            output = torch.from_numpy(output)     # dim=5: (b,n,c,h,w) # for basicVSR_infer
++            target = torch.from_numpy(target)
++        for metric in self._metrics:
++            assert metric in self.allowed_metrics, (
++                f'The metric:{metric} not in supported metrics:{self._metrics}')
++            
++            if output.ndim == 5:  # a sequence: (n, t, c, h, w)
++                avg = []
++                for i in range(0, output.size(1)):
++                    output_i = tensor2img(output[:, i, :, :, :])
++                    gt_i = tensor2img(target[:, i, :, :, :])
++                    avg.append(self.allowed_metrics[metric](output_i, gt_i, crop_border, convert_to=convert_to))
++                self._results[metric].append(avg)
++
++            elif output.ndim == 4: 
++                output_img = tensor2img(output)
++                gt_img = tensor2img(target)
++                value = self.allowed_metrics[metric](
++                    output_img, gt_img, crop_border, convert_to=convert_to)
++                self._results[metric].append(value)
++
++            else:
++                raise Exception('The metric cannot be calculated '
++                            'for a model with wrong output dims')
++        
++
++    def reset(self):
++        for metric in self._metrics:
++            assert metric in self.allowed_metrics, (
++                f'The metric:{metric} not in supported metrics:{self._metrics}')
++            self._results[metric]= []
++
++    def get_attributes(self):
++        return {'PSNR': {'direction': 'higher-better',
++                             'type': 'accuracy'},
++                'SSIM':{'direction':'higher-better',
++                             'type':'accuracy'}}
++
++
++def parse_args():
++    parser = argparse.ArgumentParser(description='Model Quantization')
++    parser.add_argument(
++        '--input_model',
++        default='',
++        type=str,
++        help='Need. Model needs to be quantized which in *.xml format') 
++    parser.add_argument(
++        '--output_dir',
++        default='./',
++        type=str,
++        help='Optional. Path to store quantized model.')
++    parser.add_argument(
++        '--dataset_path',
++        default='',
++        type=str,
++        help='Need. A representative calibration dataset representing a use case scenario')
++    parser.add_argument(
++        '--sub_folder',
++        default='',
++        type=str,
++        help='Need. Sub-folder of datasets for inference')
++    parser.add_argument(
++        '--nif',
++        default=3,
++        type=int,
++        help='Need. Number of input frames')  
++    parser.add_argument(
++        '--accuracy_aware_quantization',
++        action='store_true', 
++        help='Optional. Quantize by accuracy aware algorithm,otherwise by default algorithm')  
++    parser.add_argument(
++        '--extension',
++        default='',
++        type=str,
++        help='Optional. Extension path for custom operation')
++    args = parser.parse_args()
++    return args
++
++def main(args):
++    model_name = args.input_model.split('/')[-1].split('.xml')[0]
++    model_xml = args.input_model
++    model_bin = args.input_model.split('.xml')[0] + '.bin'
++    model_mapping = args.input_model.split('.xml')[0] + '.mapping'
++    # config settings
++    model_config = {
++        "model_name": "basicvsr",
++        "model": model_xml,
++        "weights": model_bin,
++    }
++    engine_config = {"device": "CPU",
++        'stat_requests_number':1,
++        'eval_requests_number':1
++    }
++    algorithms = []
++    name_prex = ""
++    # algorithm settings:
++    if args.accuracy_aware_quantization:
++        algorithms = [
++            {
++                "name": "AccuracyAwareQuantization",
++                "params": {
++                    "target_device": "CPU",
++                    "stat_subset_size": 10,  # for default algorithm
++                    "ranking_subset_size":10,
++                    "max_iter_num":100,
++                    "maximal_drop":0.01,
++                    "drop_type":"relative"
++                },
++            }
++        ]
++        name_prex = "optimized_acc_aware_"
++    else:
++        algorithms = [
++            {
++                "name": "DefaultQuantization",
++                "params": {
++                    "target_device": "CPU",
++                    "stat_subset_size": 10,  # for default algorithm
++                },
++            }
++        ]
++        name_prex = "optimized_"
++    # metric setting
++    metrics = ['PSNR','SSIM']
++    
++    logger.info(f'Dataset path: {args.dataset_path} and folder: {args.sub_folder}')
++    logger.info(f'Model to be quantized: {args.input_model}')
++
++    # Step 1: Load model
++    model = load_model(model_config=model_config)
++
++    import pdb;pdb.set_trace() # @longkun:
++    # Step 2: Initialize the engine
++    if args.accuracy_aware_quantization:
++        data_loader = QuantizationLoader(args.dataset_path,LR_or_HR=['LR','HR'],sub_folder=args.sub_folder,num_input_frames=args.nif,need_gt=True)  
++        # Implement Metric
++        metric = BasicvsrMetrics(metrics)
++        engine = IEEngine(config=engine_config, data_loader=data_loader,metric=metric) # accuarcy aware
++    else:
++        data_loader = QuantizationLoader(args.dataset_path,LR_or_HR=['LR'],sub_folder=args.sub_folder,num_input_frames=args.nif,need_gt=False)
++        engine = IEEngine(config=engine_config, data_loader=data_loader) # Default
++
++    # Optional load extension
++    if args.extension:
++        logger.info(f'Add custom layer extension:{args.extension}')
++        engine._ie.add_extension(args.extension)
++    
++    # Step 3: Create pipeline
++    logger.info('Create pipeline and run:')
++    pipeline = create_pipeline(algorithms,engine)
++    compressed_model = pipeline.run(model=model)
++
++    logger.info('Finished pipeline running, begin to compress model weights:')
++
++    # Step 4: Compress model weights to quantized precision
++    compress_model_weights(compressed_model)
++
++    # Step 5: Save the compressed model to desired path
++    logger.info('Finished model weights compress, begin to save model')
++    compressed_model_paths = save_model(model=compressed_model,
++                                    save_path = args.output_dir,
++                                        model_name = name_prex + model_name
++                                    )
++
++
++
++if __name__ == '__main__':
++    args = parse_args()
++    main(args)
+\ No newline at end of file
+-- 
+2.25.1
+

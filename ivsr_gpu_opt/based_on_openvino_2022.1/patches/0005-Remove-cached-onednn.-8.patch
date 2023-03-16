@@ -1,0 +1,23 @@
+From 76285d477243b97fcab2702671c172ee6fb4538b Mon Sep 17 00:00:00 2001
+From: YanjiePa <yanjie.pan@intel.com>
+Date: Wed, 21 Sep 2022 14:48:43 +0800
+Subject: [PATCH 05/17] Remove cached onednn. (#8)
+
+Signed-off-by: Pan, Yanjie <yanjie.pan@intel.com>
+
+Signed-off-by: Pan, Yanjie <yanjie.pan@intel.com>
+---
+ src/plugins/intel_cpu/thirdparty/onednn | 1 -
+ 1 file changed, 1 deletion(-)
+ delete mode 160000 src/plugins/intel_cpu/thirdparty/onednn
+
+diff --git a/src/plugins/intel_cpu/thirdparty/onednn b/src/plugins/intel_cpu/thirdparty/onednn
+deleted file mode 160000
+index 2a749c577f..0000000000
+--- a/src/plugins/intel_cpu/thirdparty/onednn
++++ /dev/null
+@@ -1 +0,0 @@
+-Subproject commit 2a749c577f8a841a396d4bd46eaf311b7e7dc089
+-- 
+2.25.1
+
