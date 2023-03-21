@@ -6,3 +6,7 @@
 	path = ivsr_gpu_opt/based_on_openvino_2022.3/openvino
 	url = https://github.com/openvinotoolkit/openvino.git
 	branch = releases/2022/3
+[submodule "ffmpeg"]
+	path = ivsr_ffmpeg_plugin/ffmpeg
+	url = https://github.com/ffmpeg/ffmpeg.git
+	branch = release/5.1
