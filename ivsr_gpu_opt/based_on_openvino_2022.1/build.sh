@@ -20,6 +20,7 @@ git am --whitespace=fix ${EX_PATH}/patches/0014-add-lisense-header-16.patch
 git am --whitespace=fix ${EX_PATH}/patches/0015-restore-file-mode-to-644-17.patch
 git am --whitespace=fix ${EX_PATH}/patches/0016-Vsr-opt-dev-20.patch
 git am --whitespace=fix ${EX_PATH}/patches/0017-Add-3rd-party-license-and-modify-readme.-21.patch
+git am --whitespace=fix ${EX_PATH}/patches/0001-Bug-Fix-Modified-C-warp-extension-implementation-to-.patch
 if [ ! -d "./build" ];then
     mkdir -p build
 fi
@@ -28,8 +29,8 @@ cd build
 cmake \
 -DCMAKE_INSTALL_PREFIX=${PWD}/../install \
 -DENABLE_INTEL_CPU=ON \
--DENABLE_CLDNN=OFF \
--DENABLE_INTEL_GPU=OFF \
+-DENABLE_CLDNN=ON \
+-DENABLE_INTEL_GPU=ON \
 -DENABLE_ONEDNN_FOR_GPU=OFF \
 -DENABLE_INTEL_GNA=OFF \
 -DENABLE_INTEL_MYRIAD_COMMON=OFF \

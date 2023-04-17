@@ -1,0 +1,100 @@
+From 9567115c6e87ee03c859789e75f1838199ffe3d3 Mon Sep 17 00:00:00 2001
+From: yangz1 <yang.zheng@intel.com>
+Date: Fri, 14 Apr 2023 15:36:20 +0800
+Subject: [PATCH] [Bug Fix] Modified C warp extension implementation to support
+ BasicVSR custom op.
+
+Signed-off-by: yangz1 <yang.zheng@intel.com>
+---
+ src/bindings/c/include/c_api/ie_c_api.h |  2 +-
+ src/bindings/c/src/ie_c_api.cpp         |  9 +++------
+ src/inference/include/ie/ie_core.hpp    |  8 ++++++++
+ src/inference/src/ie_core.cpp           | 14 +++++++++++++-
+ 4 files changed, 25 insertions(+), 8 deletions(-)
+
+diff --git a/src/bindings/c/include/c_api/ie_c_api.h b/src/bindings/c/include/c_api/ie_c_api.h
+index 2ba8e0bf28..22f5b2ac16 100644
+--- a/src/bindings/c/include/c_api/ie_c_api.h
++++ b/src/bindings/c/include/c_api/ie_c_api.h
+@@ -515,7 +515,7 @@ INFERENCE_ENGINE_C_API(IE_NODISCARD IEStatusCode) ie_core_unregister_plugin(ie_c
+  * @param device_name A device name of a device to load the extensions to.
+  * @return Status code of the operation: OK(0) for success.
+  */
+-INFERENCE_ENGINE_C_API(IE_NODISCARD IEStatusCode) ie_core_add_extension(ie_core_t *core, const char *extension_path, const char *device_name);
++INFERENCE_ENGINE_C_API(IE_NODISCARD IEStatusCode) ie_core_add_extension(ie_core_t *core, const char *extension_path, const char *xml_path, const char *device_name);
+ 
+ /**
+  * @brief Gets general runtime metric for dedicated hardware. The method is needed to request common device properties
+diff --git a/src/bindings/c/src/ie_c_api.cpp b/src/bindings/c/src/ie_c_api.cpp
+index 9d6d678f12..283dac63ad 100644
+--- a/src/bindings/c/src/ie_c_api.cpp
++++ b/src/bindings/c/src/ie_c_api.cpp
+@@ -538,18 +538,15 @@ IEStatusCode ie_core_unregister_plugin(ie_core_t *core, const char *device_name)
+     return status;
+ }
+ 
+-IEStatusCode ie_core_add_extension(ie_core_t *core, const char *extension_path, const char *device_name) {
++IEStatusCode ie_core_add_extension(ie_core_t *core, const char *extension_path, const char *xml_path, const char *device_name) {
+     IEStatusCode status = IEStatusCode::OK;
+ 
+-    if (core == nullptr || extension_path == nullptr || device_name == nullptr) {
++    if (core == nullptr || extension_path == nullptr || xml_path == nullptr || device_name == nullptr) {
+         status = IEStatusCode::GENERAL_ERROR;
+         return status;
+     }
+-
+     try {
+-        auto extension_ptr = std::make_shared<InferenceEngine::Extension>(std::string{extension_path});
+-        auto extension = std::dynamic_pointer_cast<InferenceEngine::IExtension>(extension_ptr);
+-        core->object.AddExtension(extension, device_name);
++	core->object.AddExtension(extension_path,xml_path,device_name);
+     } CATCH_IE_EXCEPTIONS
+ 
+     return status;
+diff --git a/src/inference/include/ie/ie_core.hpp b/src/inference/include/ie/ie_core.hpp
+index b7253c2535..fd21ef3126 100644
+--- a/src/inference/include/ie/ie_core.hpp
++++ b/src/inference/include/ie/ie_core.hpp
+@@ -188,6 +188,14 @@ public:
+      */
+     void AddExtension(IExtensionPtr extension, const std::string& deviceName);
+ 
++    /**
++     * @brief Registers extension for the specified plugin
++     * @param extension for extension library path
++     * @param xml_path for extension aml path
++     * @param deviceName Device name to identify plugin to add an executable extension
++     */
++    void AddExtension(const char *extension,const char *xml_path,const std::string& deviceName);
++
+     /**
+      * @brief Creates an executable network from a previously exported network
+      *
+diff --git a/src/inference/src/ie_core.cpp b/src/inference/src/ie_core.cpp
+index b62a7b176d..549c4f9840 100644
+--- a/src/inference/src/ie_core.cpp
++++ b/src/inference/src/ie_core.cpp
+@@ -1462,7 +1462,19 @@ RemoteContext::Ptr Core::GetDefaultContext(const std::string& deviceName) {
+     return _impl->GetDefaultContext(deviceName);
+ }
+ 
+-void Core::AddExtension(IExtensionPtr extension, const std::string& deviceName_) {
++void Core::AddExtension(const char *extension_path, const char *xml_path, const std::string& deviceName_) {
++    _impl->AddOVExtensions(ov::detail::load_extensions(extension_path));
++    std::map<std::string, ov::AnyMap> engine_configs;
++    if(deviceName_.find("GPU") == 0){
++	std::string cldnn_config = std::string{xml_path};
++        engine_configs["GPU"] = {{"CONFIG_FILE", cldnn_config},{"GPU_THROUGHPUT_STREAMS", 1}};
++    }
++    for(auto&& item:engine_configs){
++        _impl->set_property(item.first, item.second);
++    }
++}
++
++void Core::AddExtension(IExtensionPtr extension,const std::string& deviceName_) {
+     if (deviceName_.find("HETERO") == 0) {
+         IE_THROW() << "HETERO device does not support extensions. Please, set extensions directly to fallback devices";
+     }
+-- 
+2.25.1
+
