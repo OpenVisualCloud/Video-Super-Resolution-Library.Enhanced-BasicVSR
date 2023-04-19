@@ -1,0 +1,71 @@
+From a7a5f938311a1145cd86016ec090fd8beaeee905 Mon Sep 17 00:00:00 2001
+From: dahanhan <dahan.han@intel.com>
+Date: Fri, 14 Apr 2023 17:12:28 +0800
+Subject: [PATCH] Support OpenVINO extension when BasicVSR is utilized
+
+Hard code extension.so and op_xml as the backend option
+Modify default nireq to 1
+
+Signed-off-by: dahanhan <dahan.han@intel.com>
+---
+ libavfilter/dnn/dnn_backend_common.h   |  2 +-
+ libavfilter/dnn/dnn_backend_openvino.c | 10 +++++++++-
+ 2 files changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/libavfilter/dnn/dnn_backend_common.h b/libavfilter/dnn/dnn_backend_common.h
+index b3ff29d904..f45b3a5c38 100644
+--- a/libavfilter/dnn/dnn_backend_common.h
++++ b/libavfilter/dnn/dnn_backend_common.h
+@@ -29,7 +29,7 @@
+ #include "libavutil/thread.h"
+ 
+ #define DNN_BACKEND_COMMON_OPTIONS \
+-    { "nireq",           "number of request",             OFFSET(options.nireq),           AV_OPT_TYPE_INT,    { .i64 = 0 },     0, INT_MAX, FLAGS }, \
++    { "nireq",           "number of request",             OFFSET(options.nireq),           AV_OPT_TYPE_INT,    { .i64 = 1 },     0, INT_MAX, FLAGS }, \
+     { "async",           "use DNN async inference",       OFFSET(options.async),           AV_OPT_TYPE_BOOL,   { .i64 = 1 },     0,       1, FLAGS },
+ 
+ // one task for one function call from dnn interface
+diff --git a/libavfilter/dnn/dnn_backend_openvino.c b/libavfilter/dnn/dnn_backend_openvino.c
+index 1af05ed0d4..c9e7049bf4 100644
+--- a/libavfilter/dnn/dnn_backend_openvino.c
++++ b/libavfilter/dnn/dnn_backend_openvino.c
+@@ -36,13 +36,15 @@
+ #include "libavutil/fifo.h"
+ #include <c_api/ie_c_api.h>
+ #include "dnn_backend_common.h"
+-
++#include <string.h>
+ typedef struct OVOptions{
+     char *device_type;
+     int nireq;
+     uint8_t async;
+     int batch_size;
+     int input_resizable;
++    char* extension;
++    char* op_xml;
+ } OVOptions;
+ 
+ typedef struct OVContext {
+@@ -85,6 +87,8 @@ static const AVOption dnn_openvino_options[] = {
+     DNN_BACKEND_COMMON_OPTIONS
+     { "batch_size",  "batch size per request", OFFSET(options.batch_size),  AV_OPT_TYPE_INT,    { .i64 = 1 },     1, 1000, FLAGS},
+     { "input_resizable", "can input be resizable or not", OFFSET(options.input_resizable), AV_OPT_TYPE_BOOL,   { .i64 = 0 },     0, 1, FLAGS },
++    { "extension",  "extension lib file full path", OFFSET(options.extension),  AV_OPT_TYPE_STRING,    { .str = "../../ivsr_gpu_opt/based_on_openvino_2022.1/openvino/bin/intel64/Release/lib/libcustom_extension.so" },     0, 0, FLAGS},
++    { "op_xml",  "custom op xml file full path", OFFSET(options.op_xml),  AV_OPT_TYPE_STRING,    { .str = "../../ivsr_gpu_opt/based_on_openvino_2022.1/openvino/flow_warp_custom_op/flow_warp.xml" },     0, 0, FLAGS},
+     { NULL }
+ };
+ 
+@@ -888,6 +892,10 @@ DNNModel *ff_dnn_load_model_ov(const char *model_filename, DNNFunctionType func_
+     status = ie_core_create("", &ov_model->core);
+     if (status != OK)
+         goto err;
++    status = ie_core_add_extension(ov_model->core, ctx->options.extension, ctx->options.op_xml, ctx->options.device_type);
++    if (status != OK) {
++        av_log(ctx, AV_LOG_ERROR, "Failed to add customer op extension lib\n");
++    }
+ 
+     status = ie_core_read_network(ov_model->core, model_filename, NULL, &ov_model->network);
+     if (status != OK) {
+-- 
+2.34.1
+

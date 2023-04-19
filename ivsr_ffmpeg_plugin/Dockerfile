@@ -36,7 +36,7 @@ RUN apt-get update && \
     curl wget ca-certificates gpg-agent software-properties-common && \
   rm -rf /var/lib/apt/lists/*
 
-SHELL ["/bin/bash", "-c"]
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 FROM base as build
 LABEL vendor="Intel Corporation"
@@ -77,7 +77,7 @@ RUN apt-get update && \
 ARG WORKSPACE=/workspace
 ARG OPENCV_REPO=https://github.com/opencv/opencv/archive/4.5.3-openvino-2021.4.2.tar.gz
 RUN cd ${WORKSPACE} && \
-  wget -O - ${OPENCV_REPO} | tar xz
+  wget -qO - ${OPENCV_REPO} | tar xz
 
 RUN cd ${WORKSPACE}/opencv-4.5.3-openvino-2021.4.2 && mkdir build && mkdir install && cd build && \
   cmake \
@@ -148,13 +148,13 @@ RUN cd ${FFMPEG_PLUGIN_DIR} && \
   cd ${FFMPEG_DIR} && { set -e; \
   for patch_file in $(find -iname "*.patch" | sort -n); do \
     echo "Applying: ${patch_file}"; \
-    patch -p1 < ${patch_file}; \
+    patch -p1 < "${patch_file}"; \
   done; }
 
 RUN if [ -f "${CUSTOM_OV_INSTALL_DIR}/setvars.sh" ]; then \
       . ${CUSTOM_OV_INSTALL_DIR}/setvars.sh ; \
     fi && \
-    export LD_LIBRARY_PATH=${CUSTOM_IE_LIBDIR}:${TBB_DIR}/../lib:$LD_LIBRARY_PATH && \
+    export LD_LIBRARY_PATH=${CUSTOM_IE_LIBDIR}:${TBB_DIR}/../lib:"$LD_LIBRARY_PATH" && \
     cd ${FFMPEG_DIR} && \
     ./configure \
     --enable-libopenvino \
