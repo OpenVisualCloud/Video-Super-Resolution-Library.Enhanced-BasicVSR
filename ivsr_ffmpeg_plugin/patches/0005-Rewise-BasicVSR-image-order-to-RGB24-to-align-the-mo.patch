@@ -1,0 +1,35 @@
+From fc163aaa9f76c448311637ded13838b538281d37 Mon Sep 17 00:00:00 2001
+From: dahanhan <dahan.han@intel.com>
+Date: Fri, 21 Apr 2023 16:01:55 +0800
+Subject: [PATCH] Rewise BasicVSR image order to RGB24 to align the model
+
+Signed-off-by: dahanhan <dahan.han@intel.com>
+---
+ libavfilter/dnn/dnn_backend_openvino.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/libavfilter/dnn/dnn_backend_openvino.c b/libavfilter/dnn/dnn_backend_openvino.c
+index c9e7049bf4..62d1b271e8 100644
+--- a/libavfilter/dnn/dnn_backend_openvino.c
++++ b/libavfilter/dnn/dnn_backend_openvino.c
+@@ -209,7 +209,7 @@ static int fill_model_input_ov(OVModel *ov_model, OVRequestItem *request)
+                                 memcpy((uint8_t*)in_in_packed, (uint8_t*)input.data, input.height * input.width * input.channels * sizeof(float));
+                                 for (int pos = 0; pos < input.height * input.width; pos++) {
+                                     for (int ch = 0; ch < input.channels; ch++) {
+-                                        ((float*)input.data)[(ch * input.height * input.width + pos)] = ((float*)in_in_packed)[(pos * input.channels + ch)];
++                                        ((float*)input.data)[(ch * input.height * input.width + pos)] = ((float*)in_in_packed)[(pos * input.channels + (input.channels - 1 - ch))];
+                                     }
+                                 }
+                                 input.data += input.height * input.width * input.channels * sizeof(float);
+@@ -334,7 +334,7 @@ static void infer_completion_callback(void *args)
+                                 memcpy((uint8_t*)out_in_planar, (uint8_t*)output.data, output.height * output.width * output.channels * sizeof(float));
+                                 for (int pos = 0; pos < output.height * output.width; pos++) {
+                                     for (int ch = 0; ch < output.channels; ch++) {
+-                                        ((float*)output.data)[(pos * output.channels + ch)] = ((float*)out_in_planar)[(ch * output.height * output.width + pos)];
++                                        ((float*)output.data)[(pos * output.channels + ch)] = ((float*)out_in_planar)[((output.channels - 1 - ch) * output.height * output.width + pos)];
+                                     }
+                                 }
+                                 ff_proc_from_dnn_to_frame(tmp_frame, &output, &ov_model->model->filter_ctx);
+-- 
+2.17.1
+
