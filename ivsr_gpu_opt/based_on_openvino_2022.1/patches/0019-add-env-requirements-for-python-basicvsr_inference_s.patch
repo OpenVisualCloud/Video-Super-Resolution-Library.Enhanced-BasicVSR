@@ -1,0 +1,23 @@
+From 8010295678546ba4b297b705596f19505dc9792c Mon Sep 17 00:00:00 2001
+From: Long Kun <kun.long@intel.com>
+Date: Wed, 19 Apr 2023 00:55:36 +0000
+Subject: [PATCH] add env requirements for python basicvsr_inference_sample.py
+
+---
+ requirements.txt | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/requirements.txt b/requirements.txt
+index 05f41acf6f..04771e3eb8 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -1,2 +1,5 @@
+ cython
+-
++torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
++opencv-python
++numpy==1.19
++mmcv
+-- 
+2.25.1
+
