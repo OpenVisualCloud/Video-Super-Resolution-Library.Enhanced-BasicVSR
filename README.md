@@ -4,14 +4,14 @@ iVSR is Intel's video super resolution (VSR) solution that enables VSR inference
 with enhanced quality and optimized performance.
 
 ## iVSR GPU Opt
-This folder enables the inference of BasicVSR (an AI-based VSR algorithm) on GPU (Data Center GPU Flex series, aka. ATS-M)
+This folder enables the inference of BasicVSR (an AI-based VSR algorithm) on Intel CPU and Intel GPU Flex series 170, aka. ATS-M1 150W.
 with OpenVINO. 
+
+Please check [iVSR_GPU_OPT_README](./ivsr_gpu_opt/README.md) for more details.
 
 ## iVSR FFmpeg plugin
 This folder enables to do BasicVSR inference using FFmpeg with OpenVINO as backend.
 
-## iVSR SDK
-This folder provides a patch-based, heterogeneous, multi-GPU and multi-algo VSR solution 
-that fully leverages CPU and GPUs to support high resolution videos with great quality and performance
+Please check [iVSR_FFmpeg_plugin_README](./ivsr_ffmpeg_plugin/README.md) for more details.
 
 
