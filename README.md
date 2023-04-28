@@ -1,17 +1,32 @@
-# Intel Video Super Resolution (iVSR)
+# Enhanced BasicVSR (iVSR)
 
-iVSR is Intel's video super resolution (VSR) solution that enables VSR inference on Intel's CPU/GPU 
-with enhanced quality and optimized performance.
+Video super resolution (VSR) is widely used in AI media enhancement domain to 
+convert low-resolution video to high-resolution. 
 
-## iVSR GPU Opt
-This folder enables the inference of BasicVSR (an AI-based VSR algorithm) on Intel CPU and Intel GPU Flex series 170, aka. ATS-M1 150W.
-with OpenVINO. 
 
-Please check [iVSR_GPU_OPT_README](./ivsr_gpu_opt/README.md) for more details.
+BasicVSR is a public AI-based VSR algorithm. 
+For details of public BasicVSR, check out the [paper](https://arxiv.org/pdf/2012.02181.pdf). 
 
-## iVSR FFmpeg plugin
-This folder enables to do BasicVSR inference using FFmpeg with OpenVINO as backend.
+We have enhanced the public model to achieve better visual quality and less computational complexity. 
+The performance of BasicVSR inference has also been optimized for Intel GPU. 
+Now, 2x Enhanced BasicVSR can be run on both Intel CPU and Intel Data Center GPU Flex 170 (*aka* ATS-M1 150W) with OpenVINO and FFmpeg.
 
-Please check [iVSR_FFmpeg_plugin_README](./ivsr_ffmpeg_plugin/README.md) for more details.
 
+## How to evaluate
+
+Please expect `pre-production` quality of current solution.
+
+### Get models
+Please [contact us](mailto:yanjie.pan@intel.com) for FP32/INT8 Enhanced BasicVSR models. Will provide links to download the models soon.
+
+### Run with OpenVINO
+Refer to the guide [here](ivsr_gpu_opt/README.md).
+
+### Run with FFmpeg
+Refer to the guide [here](ivsr_ffmpeg_plugin/README.md).
+
+
+## License
+
+Enhanced BasicVSR is licensed under the BSD 3-clause license. See [LICENSE](LICENSE.md) for details.
 
