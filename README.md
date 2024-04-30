@@ -17,7 +17,7 @@ Now, 2x Enhanced BasicVSR can be run on both Intel CPU and Intel Data Center GPU
 Please expect `pre-production` quality of current solution.
 
 ### Get models
-Please [contact us](mailto:yanjie.pan@intel.com) for FP32/INT8 Enhanced BasicVSR models. Will provide links to download the models soon.
+Please [contact us](mailto:beryl.xu@intel.com) for FP32/INT8 Enhanced BasicVSR models. Will provide links to download the models soon.
 
 ### Run with OpenVINO
 Refer to the guide [here](ivsr_gpu_opt/README.md).
