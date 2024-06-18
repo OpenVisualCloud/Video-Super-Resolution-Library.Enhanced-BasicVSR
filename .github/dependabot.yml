@@ -1,0 +1,6 @@
+version: 2
+updates:
+  - package-ecosystem: docker
+    directory: /ivsr_ffmpeg_plugin
+    schedule:
+      interval: daily
