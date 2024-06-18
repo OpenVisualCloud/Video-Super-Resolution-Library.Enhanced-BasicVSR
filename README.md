@@ -7,8 +7,8 @@ convert low-resolution video to high-resolution.
 BasicVSR is a public AI-based VSR algorithm. 
 For details of public BasicVSR, check out the [paper](https://arxiv.org/pdf/2012.02181.pdf). 
 
-We have enhanced the public model to achieve better visual quality and less computational complexity. 
-The performance of BasicVSR inference has also been optimized for Intel GPU. 
+We have enhanced the public model to achieve better visual quality and less computational complexity, named Enhanced BasicVSR.
+The performance of Enhanced BasicVSR inference has also been optimized for Intel GPU.
 Now, 2x Enhanced BasicVSR can be run on both Intel CPU and Intel Data Center GPU Flex 170 (*aka* ATS-M1 150W) with OpenVINO and FFmpeg.
 
 
