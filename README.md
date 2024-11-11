@@ -1,5 +1,10 @@
 # Enhanced BasicVSR (iVSR)
 
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/OpenVisualCloud/Video-Super-Resolution-Library.Enhanced-BasicVSR/badge)](https://api.securityscorecards.dev/projects/github.com/OpenVisualCloud/Video-Super-Resolution-Library.Enhanced-BasicVSR)
+[![Dependency Review](https://github.com/OpenVisualCloud/Video-Super-Resolution-Library.Enhanced-BasicVSR/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/OpenVisualCloud/Video-Super-Resolution-Library.Enhanced-BasicVSR/actions/workflows/dependency-review.yml)
+[![CodeQL](https://github.com/OpenVisualCloud/Video-Super-Resolution-Library.Enhanced-BasicVSR/actions/workflows/codeql.yml/badge.svg)](https://github.com/OpenVisualCloud/Video-Super-Resolution-Library.Enhanced-BasicVSR/actions/workflows/codeql.yml)
+[![License](https://img.shields.io/badge/license-BSD_3_Clause-stable.svg)](https://github.com/OpenVisualCloud/Video-Super-Resolution-Library.Enhanced-BasicVSR/blob/master/LICENSE.md)
+
 Video super resolution (VSR) is widely used in AI media enhancement domain to 
 convert low-resolution video to high-resolution. 
 
