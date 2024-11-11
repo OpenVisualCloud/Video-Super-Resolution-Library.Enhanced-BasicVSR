@@ -1,0 +1,91 @@
+From 8deef974e5679998a42dd4a1e0a8779c92f1fd72 Mon Sep 17 00:00:00 2001
+From: Liang <xiaoxia.liang@intel.com>
+Date: Fri, 17 May 2024 21:21:58 +0800
+Subject: [PATCH] dnn_backend_ivsr: fix coverity issues.
+
+Signed-off-by: Liang <xiaoxia.liang@intel.com>
+---
+ libavfilter/dnn/dnn_backend_ivsr.c | 59 ++++++++++++++++--------------
+ 1 file changed, 32 insertions(+), 27 deletions(-)
+
+diff --git a/libavfilter/dnn/dnn_backend_ivsr.c b/libavfilter/dnn/dnn_backend_ivsr.c
+index 883b06dae1..75b0926b99 100644
+--- a/libavfilter/dnn/dnn_backend_ivsr.c
++++ b/libavfilter/dnn/dnn_backend_ivsr.c
+@@ -192,21 +192,24 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+                             ff_proc_from_frame_to_dnn(tmp_frame, &input,
+                                                       ivsr_model->model->
+                                                       filter_ctx);
+-                            memcpy((uint8_t *) in_in_packed,
+-                                   (uint8_t *) input.data,
+-                                   input.height * input.width *
+-                                   input.channels * sizeof(float));
+-                            for (int pos = 0;
+-                                 pos < input.height * input.width; pos++) {
+-                                for (int ch = 0; ch < input.channels; ch++) {
+-                                    ((float *)
+-                                     input.data)[(ch * input.height *
+-                                                  input.width + pos)] =
++                            // convert buffer from NHWC to NCHW when C != 1
++                            if (input.channels != 1) {
++                                memcpy((uint8_t *) in_in_packed,
++                                        (uint8_t *) input.data,
++                                        input.height * input.width *
++                                        input.channels * sizeof(float));
++                                for (int pos = 0;
++                                    pos < input.height * input.width; pos++) {
++                                    for (int ch = 0; ch < input.channels; ch++) {
+                                         ((float *)
+-                                         in_in_packed)[(pos *
+-                                                        input.channels +
+-                                                        (input.channels -
+-                                                         1 - ch))];
++                                        input.data)[(ch * input.height *
++                                                    input.width + pos)] =
++                                            ((float *)
++                                            in_in_packed)[(pos *
++                                                            input.channels +
++                                                            (input.channels -
++                                                            1 - ch))];
++                                    }
+                                 }
+                             }
+                             input.data +=
+@@ -338,19 +341,21 @@ static void infer_completion_callback(void *args)
+                             av_fifo_peek(task->out_queue, &tmp_frame, 1,
+                                          offset);
+                         if (ret == 0) {
+-                            memcpy((uint8_t *) out_in_planar,
+-                                   (uint8_t *) output.data,
+-                                   output.height * output.width *
+-                                   output.channels * sizeof(float));
+-                            for (int pos = 0;
+-                                 pos < output.height * output.width;
+-                                 pos++) {
+-                                for (int ch = 0; ch < output.channels;
+-                                     ch++) {
+-                                    ((float *)
+-                                     output.data)[(pos * output.channels +
+-                                                   ch)] = ((float *)
+-                                                           out_in_planar)[((output.channels - 1 - ch) * output.height * output.width + pos)];
++                            if (output.channels != 1) {
++                                memcpy((uint8_t *) out_in_planar,
++                                        (uint8_t *) output.data,
++                                        output.height * output.width *
++                                        output.channels * sizeof(float));
++                                for (int pos = 0;
++                                    pos < output.height * output.width;
++                                    pos++) {
++                                    for (int ch = 0; ch < output.channels;
++                                        ch++) {
++                                        ((float *)
++                                        output.data)[(pos * output.channels +
++                                                      ch)] = ((float *)
++                                                              out_in_planar)[((output.channels - 1 - ch) * output.height * output.width + pos)];
++                                    }
+                                 }
+                             }
+                             ff_proc_from_dnn_to_frame(tmp_frame, &output,
+-- 
+2.34.1
+

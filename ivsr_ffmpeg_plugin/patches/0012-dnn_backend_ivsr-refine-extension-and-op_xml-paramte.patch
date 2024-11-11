@@ -1,0 +1,104 @@
+From b687599171d2c0bd42504b83f1b6d2f58c0a0b10 Mon Sep 17 00:00:00 2001
+From: Liang Xiaoxia <xiaoxia.liang@intel.com>
+Date: Tue, 16 Apr 2024 13:35:28 +0800
+Subject: [PATCH] dnn_backend_ivsr: refine extension and op_xml paramters into
+ option not required.
+
+Signed-off-by: Liang Xiaoxia <xiaoxia.liang@intel.com>
+---
+ libavfilter/dnn/dnn_backend_ivsr.c | 60 +++++++++++++++++++++-----------------
+ 1 file changed, 34 insertions(+), 26 deletions(-)
+
+diff --git a/libavfilter/dnn/dnn_backend_ivsr.c b/libavfilter/dnn/dnn_backend_ivsr.c
+index f350835..80c209c 100644
+--- a/libavfilter/dnn/dnn_backend_ivsr.c
++++ b/libavfilter/dnn/dnn_backend_ivsr.c
+@@ -90,8 +90,8 @@ static const AVOption dnn_ivsr_options[] = {
+     { "device", "device to run model, must choose one from CPU or GPU", OFFSET(options.device_type), AV_OPT_TYPE_STRING, { .str = "CPU" }, 0, 0, FLAGS },
+     DNN_BACKEND_COMMON_OPTIONS
+     { "batch_size",  "batch size per request, NOT usable for BasicVSR model", OFFSET(options.batch_size),  AV_OPT_TYPE_INT,    { .i64 = 1 },     1, 1000, FLAGS},
+-    { "extension",  "extension lib file full path, NOT usable for BasicVSR model", OFFSET(options.extension),  AV_OPT_TYPE_STRING,    { .str = "../../../ivsr_gpu_opt/based_on_openvino_2022.3/openvino/bin/intel64/Release/libcustom_extension.so" },     0, 0, FLAGS},
+-    { "op_xml",  "custom op xml file full path, NOT usable for BasicVSR model", OFFSET(options.op_xml),  AV_OPT_TYPE_STRING,    { .str = "../../../ivsr_gpu_opt/based_on_openvino_2022.3/openvino/flow_warp_cl_kernel/flow_warp.xml" },     0, 0, FLAGS},
++    { "extension",  "extension lib file full path, usable for BasicVSR model", OFFSET(options.extension),  AV_OPT_TYPE_STRING,    { .str = NULL },     0, 0, FLAGS},
++    { "op_xml",  "custom op xml file full path, usable for BasicVSR model", OFFSET(options.op_xml),  AV_OPT_TYPE_STRING,    { .str = NULL },     0, 0, FLAGS},
+     { "model_type",  "dnn model type", OFFSET(options.model_type),  AV_OPT_TYPE_INT,    { .i64 = 0 },     0, MODEL_TYPE_NUM - 1, FLAGS},
+     { "normalize_factor", "normalization factor", OFFSET(options.normalize_factor), AV_OPT_TYPE_FLOAT, { .dbl = 1.0 }, 1.0, 255.0, FLAGS},
+     { NULL }
+@@ -641,28 +641,6 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+     config_device->next = NULL;
+     config->next = config_device;
+ 
+-    // extension
+-    config_customlib = av_mallocz(sizeof(ivsr_config_t));
+-    if (config_customlib == NULL) {
+-        av_log(ctx, AV_LOG_ERROR, "Failed to malloc customlib config\n");
+-        goto err;
+-    }
+-    config_customlib->key = CUSTOM_LIB;
+-    config_customlib->value = ctx->options.extension;
+-    config_customlib->next = NULL;
+-    config_device->next = config_customlib;
+-
+-    // cldnn
+-    config_cldnn = av_mallocz(sizeof(ivsr_config_t));
+-    if (config_cldnn == NULL) {
+-        av_log(ctx, AV_LOG_ERROR, "Failed to malloc cldnn config\n");
+-        goto err;
+-    }
+-    config_cldnn->key = CLDNN_CONFIG;
+-    config_cldnn->value = ctx->options.op_xml;
+-    config_cldnn->next = NULL;
+-    config_customlib->next = config_cldnn;
+-
+     // reshape setting
+     config_reshape = av_mallocz(sizeof(ivsr_config_t));
+     if (config_reshape == NULL) {
+@@ -693,7 +671,37 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+     config_reshape->key = RESHAPE_SETTINGS;
+     config_reshape->value = shape_string;
+     config_reshape->next = NULL;
+-    config_cldnn->next = config_reshape;
++    config_device->next = config_reshape;
++
++    if (ctx->options.extension != NULL) {
++        // extension
++        config_customlib = av_mallocz(sizeof(ivsr_config_t));
++        if (config_customlib == NULL) {
++            av_log(ctx, AV_LOG_ERROR, "Failed to malloc customlib config\n");
++            goto err;
++        }
++        config_customlib->key = CUSTOM_LIB;
++        config_customlib->value = ctx->options.extension;
++        config_customlib->next = NULL;
++        config_reshape->next = config_customlib;
++    }
++
++    if (ctx->options.op_xml != NULL) {
++        // cldnn
++        config_cldnn = av_mallocz(sizeof(ivsr_config_t));
++        if (config_cldnn == NULL) {
++            av_log(ctx, AV_LOG_ERROR, "Failed to malloc cldnn config\n");
++            goto err;
++        }
++        config_cldnn->key = CLDNN_CONFIG;
++        config_cldnn->value = ctx->options.op_xml;
++        config_cldnn->next = NULL;
++        if (config_customlib != NULL) {
++            config_customlib->next = config_cldnn;
++        } else {
++            config_reshape->next = config_cldnn;
++        }
++    }
+ 
+     // initialize ivsr
+     status = ivsr_init(config, &ivsr_model->handle);
+@@ -973,4 +981,4 @@ const DNNModule ff_dnn_backend_ivsr = {
+     .get_result     = ff_dnn_get_result_ivsr,
+     .flush          = ff_dnn_flush_ivsr,
+     .free_model     = ff_dnn_free_model_ivsr,
+-};
+\ No newline at end of file
++};
+-- 
+1.8.3.1
+

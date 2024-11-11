@@ -1,0 +1,176 @@
+From 346522b91a0e74473cced2d8efdbc58cbd1ac1c1 Mon Sep 17 00:00:00 2001
+From: ChengZhang <cheng.zhang@intel.com>
+Date: Thu, 7 Sep 2023 16:28:03 +0000
+Subject: [PATCH] Add iVSR SDK build dependency and backend interfaces
+
+---
+ configure                          |  6 +++++-
+ libavfilter/dnn/Makefile           |  1 +
+ libavfilter/dnn/dnn_backend_ivsr.c | 31 ++++++++++++++++++++++++++++++
+ libavfilter/dnn/dnn_backend_ivsr.h | 20 +++++++++++++++++++
+ libavfilter/dnn/dnn_interface.c    | 13 +++++++++++++
+ libavfilter/dnn_interface.h        |  2 +-
+ 6 files changed, 71 insertions(+), 2 deletions(-)
+ create mode 100644 libavfilter/dnn/dnn_backend_ivsr.c
+ create mode 100644 libavfilter/dnn/dnn_backend_ivsr.h
+
+diff --git a/configure b/configure
+index ba5793b2ff..a541dc1ef7 100755
+--- a/configure
++++ b/configure
+@@ -255,6 +255,8 @@ External library support:
+   --enable-libopenmpt      enable decoding tracked files via libopenmpt [no]
+   --enable-libopenvino     enable OpenVINO as a DNN module backend
+                            for DNN based filters like dnn_processing [no]
++  --enable-libivsr         enable iVSR SDK as a DNN module backend
++                           for DNN based Super Resolution filters
+   --enable-libopus         enable Opus de/encoding via libopus [no]
+   --enable-libplacebo      enable libplacebo library [no]
+   --enable-libpulse        enable Pulseaudio input via libpulse [no]
+@@ -1847,6 +1849,7 @@ EXTERNAL_LIBRARY_LIST="
+     libopenjpeg
+     libopenmpt
+     libopenvino
++    libivsr
+     libopus
+     libplacebo
+     libpulse
+@@ -2760,7 +2763,7 @@ dct_select="rdft"
+ deflate_wrapper_deps="zlib"
+ dirac_parse_select="golomb"
+ dovi_rpu_select="golomb"
+-dnn_suggest="libtensorflow libopenvino"
++dnn_suggest="libtensorflow libopenvino libivsr"
+ dnn_deps="avformat swscale"
+ error_resilience_select="me_cmp"
+ evcparse_select="golomb"
+@@ -6772,6 +6775,7 @@ enabled libopenmpt        && require_pkg_config libopenmpt "libopenmpt >= 0.2.6557
+ enabled libopenvino       && { { check_pkg_config libopenvino openvino openvino/c/openvino.h ov_core_create && enable openvino2; } ||
+                                 { check_pkg_config libopenvino openvino c_api/ie_c_api.h ie_c_api_version ||
+                                   require libopenvino c_api/ie_c_api.h ie_c_api_version -linference_engine_c_api; } }
++enabled libivsr           && require libivsr ivsr.h ivsr_init -livsr
+ enabled libopus           && {
+     enabled libopus_decoder && {
+         require_pkg_config libopus opus opus_multistream.h opus_multistream_decoder_create
+diff --git a/libavfilter/dnn/Makefile b/libavfilter/dnn/Makefile
+index 4cfbce0efc..53c96fa2a4 100644
+--- a/libavfilter/dnn/Makefile
++++ b/libavfilter/dnn/Makefile
+@@ -16,5 +16,6 @@ OBJS-$(CONFIG_DNN)                           += dnn/dnn_backend_native_layer_mat
+ 
+ DNN-OBJS-$(CONFIG_LIBTENSORFLOW)             += dnn/dnn_backend_tf.o
+ DNN-OBJS-$(CONFIG_LIBOPENVINO)               += dnn/dnn_backend_openvino.o
++DNN-OBJS-$(CONFIG_LIBIVSR)                   += dnn/dnn_backend_ivsr.o
+ 
+ OBJS-$(CONFIG_DNN)                           += $(DNN-OBJS-yes)
+diff --git a/libavfilter/dnn/dnn_backend_ivsr.c b/libavfilter/dnn/dnn_backend_ivsr.c
+new file mode 100644
+index 0000000000..13327eab15
+--- /dev/null
++++ b/libavfilter/dnn/dnn_backend_ivsr.c
+@@ -0,0 +1,39 @@
++/**
++ * @file
++ * DNN iVSR SDK backend implementation.
++ */
++
++#include "dnn_backend_ivsr.h"
++
++DNNModel *ff_dnn_load_model_ivsr(const char *model_filename, DNNFunctionType func_type, const char *options, AVFilterContext *filter_ctx)
++{
++    return NULL;
++}
++
++int ff_dnn_execute_model_ivsr(const DNNModel *model, DNNExecBaseParams *exec_params)
++{
++    return 0;
++}
++
++DNNAsyncStatusType ff_dnn_get_result_ivsr(const DNNModel *model, AVFrame **in, AVFrame **out)
++{
++    return DAST_SUCCESS;
++}
++
++int ff_dnn_flush_ivsr(const DNNModel *model)
++{
++    return 0;
++}
++
++void ff_dnn_free_model_ivsr(DNNModel **model)
++{
++    return;
++}
++
++const DNNModule ff_dnn_backend_ivsr = {
++    .load_model     = ff_dnn_load_model_ivsr,
++    .execute_model  = ff_dnn_execute_model_ivsr,
++    .get_result     = ff_dnn_get_result_ivsr,
++    .flush          = ff_dnn_flush_ivsr,
++    .free_model     = ff_dnn_free_model_ivsr,
++};
+\ No newline at end of file
+diff --git a/libavfilter/dnn/dnn_backend_ivsr.h b/libavfilter/dnn/dnn_backend_ivsr.h
+new file mode 100644
+index 0000000000..3ace47b7ac
+--- /dev/null
++++ b/libavfilter/dnn/dnn_backend_ivsr.h
+@@ -0,0 +1,20 @@
++/**
++ * @file
++ * DNN inference functions interface for iVSR SDK backend.
++ */
++
++
++#ifndef AVFILTER_DNN_DNN_BACKEND_IVSR_H
++#define AVFILTER_DNN_DNN_BACKEND_IVSR_H
++
++#include "../dnn_interface.h"
++
++DNNModel *ff_dnn_load_model_ivsr(const char *model_filename, DNNFunctionType func_type, const char *options, AVFilterContext *filter_ctx);
++
++int ff_dnn_execute_model_ivsr(const DNNModel *model, DNNExecBaseParams *exec_params);
++DNNAsyncStatusType ff_dnn_get_result_ivsr(const DNNModel *model, AVFrame **in, AVFrame **out);
++int ff_dnn_flush_ivsr(const DNNModel *model);
++
++void ff_dnn_free_model_ivsr(DNNModel **model);
++
++#endif
+diff --git a/libavfilter/dnn/dnn_interface.c b/libavfilter/dnn/dnn_interface.c
+index 554a36b0dc..3763f898af 100644
+--- a/libavfilter/dnn/dnn_interface.c
++++ b/libavfilter/dnn/dnn_interface.c
+@@ -28,6 +28,7 @@
+ 
+ extern const DNNModule ff_dnn_backend_openvino;
+ extern const DNNModule ff_dnn_backend_tf;
++extern const DNNModule ff_dnn_backend_ivsr;
+ 
+ const DNNModule *ff_get_dnn_module(DNNBackendType backend_type, void *log_ctx)
+ {
+@@ -40,6 +41,10 @@ const DNNModule *ff_get_dnn_module(DNNBackendType backend_type, void *log_ctx)
+     case DNN_OV:
+         return &ff_dnn_backend_openvino;
+     #endif
++    #if (CONFIG_LIBIVSR == 1)
++    case DNN_IVSR:
++        return &ff_dnn_backend_ivsr;
++    #endif
+     default:
+         av_log(log_ctx, AV_LOG_ERROR,
+                 "Module backend_type %d is not supported or enabled.\n",
+diff --git a/libavfilter/dnn_interface.h b/libavfilter/dnn_interface.h
+index ef8d7ae66f..0e96562da2 100644
+--- a/libavfilter/dnn_interface.h
++++ b/libavfilter/dnn_interface.h
+@@ -32,7 +32,7 @@
+ 
+ #define DNN_GENERIC_ERROR FFERRTAG('D','N','N','!')
+ 
+-typedef enum {DNN_TF = 1, DNN_OV} DNNBackendType;
++typedef enum {DNN_TF = 1, DNN_OV, DNN_IVSR} DNNBackendType;
+ 
+ typedef enum {DNN_FLOAT = 1, DNN_UINT8 = 4} DNNDataType;
+ 
+-- 
+2.34.1
+

@@ -1,0 +1,37 @@
+From 4aa6f0521adfb60a096bea62c8bbc84803f7fc05 Mon Sep 17 00:00:00 2001
+From: xueshuwa <xueshu.wang@intel.com>
+Date: Thu, 11 Apr 2024 00:47:38 +0800
+Subject: [PATCH] Initalize scale & mean of input&output
+
+---
+ libavfilter/dnn/dnn_backend_ivsr.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/libavfilter/dnn/dnn_backend_ivsr.c b/libavfilter/dnn/dnn_backend_ivsr.c
+index e949c53529..f94f057c0b 100644
+--- a/libavfilter/dnn/dnn_backend_ivsr.c
++++ b/libavfilter/dnn/dnn_backend_ivsr.c
+@@ -159,6 +159,9 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+     input.data = request->in_frames;
+     input.order = DCO_BGR;
+     in_data = input.data;
++    input.scale = 0;
++    input.mean = 0;
++    input.layout = DL_NONE;
+ 
+     if (input.channels != 1) {
+         in_in_packed =
+@@ -302,7 +305,9 @@ static void infer_completion_callback(void *args)
+ 
+     output.dt = DNN_FLOAT;
+     output.data = request->out_frames;
+-
++    output.scale    = 0;
++    output.mean     = 0;
++    output.layout = DL_NONE;
+     if (output.channels != 1) {
+         out_in_planar =
+             av_malloc(output.height * output.width * output.channels *
+-- 
+2.34.1
+

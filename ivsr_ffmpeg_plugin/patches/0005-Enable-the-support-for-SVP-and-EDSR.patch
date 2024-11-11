@@ -1,0 +1,151 @@
+From 24d29ca07386717a025aad61600ed9ee4d7fafa0 Mon Sep 17 00:00:00 2001
+From: ChengZhang <cheng.zhang@intel.com>
+Date: Thu, 23 Nov 2023 21:46:58 +0800
+Subject: [PATCH] Enable the support for SVP and EDSR
+
+---
+ libavfilter/dnn/dnn_backend_ivsr.c | 44 ++++++++++++++++++------------
+ 1 file changed, 27 insertions(+), 17 deletions(-)
+
+diff --git a/libavfilter/dnn/dnn_backend_ivsr.c b/libavfilter/dnn/dnn_backend_ivsr.c
+index a13e823e3b..ed9de07998 100644
+--- a/libavfilter/dnn/dnn_backend_ivsr.c
++++ b/libavfilter/dnn/dnn_backend_ivsr.c
+@@ -45,6 +45,7 @@ typedef struct IVSROptions {
+     char *extension;
+     char *op_xml;
+     int model_type;
++    float normalize_factor;
+ } IVSROptions;
+ 
+ typedef struct IVSRContext {
+@@ -56,6 +57,7 @@ typedef enum {
+     UNKNOWN_MODEL = -1,
+     BASICVSR,
+     VIDEOPROC,
++    EDSR,
+     MODEL_TYPE_NUM
+ } ModelType;
+ 
+@@ -89,6 +91,7 @@ static const AVOption dnn_ivsr_options[] = {
+     { "extension",  "extension lib file full path, NOT usable for BasicVSR model", OFFSET(options.extension),  AV_OPT_TYPE_STRING,    { .str = "../../../ivsr_gpu_opt/based_on_openvino_2022.3/openvino/bin/intel64/Release/libcustom_extension.so" },     0, 0, FLAGS},
+     { "op_xml",  "custom op xml file full path, NOT usable for BasicVSR model", OFFSET(options.op_xml),  AV_OPT_TYPE_STRING,    { .str = "../../../ivsr_gpu_opt/based_on_openvino_2022.3/openvino/flow_warp_cl_kernel/flow_warp.xml" },     0, 0, FLAGS},
+     { "model_type",  "dnn model type", OFFSET(options.model_type),  AV_OPT_TYPE_INT,    { .i64 = 0 },     0, MODEL_TYPE_NUM - 1, FLAGS},
++    { "normalize_factor", "normalization factor", OFFSET(options.normalize_factor), AV_OPT_TYPE_FLOAT, { .dbl = 1.0 }, 1.0, 255.0, FLAGS},
+     { NULL }
+ };
+ 
+@@ -119,6 +122,7 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+     void *in_data = NULL;
+     void *in_in_packed = NULL;
+     int dims[5] = { 0, 0, 0, 0, 0 };
++    float normalize_factor = ctx->options.normalize_factor;
+ 
+     lltask = ff_queue_peek_front(ivsr_model->lltask_queue);
+     av_assert0(lltask);
+@@ -135,10 +139,10 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+         input.height = dims[3];
+         input.width = dims[4];
+         input.dt = DNN_FLOAT;
+-    } else if (ivsr_model->model_type == VIDEOPROC) {
+-        input.channels = dims[1];
+-        input.height = dims[2];
+-        input.width = dims[3];
++    } else if (ivsr_model->model_type == VIDEOPROC || ivsr_model->model_type == EDSR) {
++        input.channels = dims[2];
++        input.height = dims[3];
++        input.width = dims[4];
+         input.dt = DNN_FLOAT;
+     } else {
+         av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
+@@ -206,6 +210,10 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+                                "Read frame number is %d less than the model requirement!!!\n",
+                                read_frame_num);
+                 } else {
++                    // ff_proc_from_frame_to_dnn will perform normalization by calling
++                    // uint_y_to_float_y_wrapper in swscale_unscaled.c
++                    // So, for the inputs do not need normalization, normalization facotr should be multiplied back.
++                    // Same to ff_proc_from_dnn_to_frame.
+                     ff_proc_from_frame_to_dnn(task->in_frame, &input,
+                                               ivsr_model->model->
+                                               filter_ctx);
+@@ -215,7 +223,7 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+                     for (int pos = 0; pos < input.height * input.width; pos++) {
+                         for (int ch = 0; ch < input.channels; ch++) {
+                             ((float*)input.data)[(ch * input.height * input.width + pos)] =
+-                                ((float*)in_in_packed)[(pos * input.channels + (input.channels - 1 - ch))];
++                                ((float*)in_in_packed)[(pos * input.channels + (input.channels - 1 - ch))] * normalize_factor;
+                         }
+                     }
+                 }
+@@ -245,6 +253,7 @@ static void infer_completion_callback(void *args)
+     void *out_in_planar = NULL;
+     int offset = 0;
+     int dims[5] = { 0, 0, 0, 0, 0 };
++    float normalize_factor = ctx->options.normalize_factor;
+ 
+     status = ivsr_get_attr(ivsr_model->handle, OUTPUT_TENSOR_DESC, dims);
+     if (status != OK) {
+@@ -256,10 +265,10 @@ static void infer_completion_callback(void *args)
+         output.channels = dims[1];
+         output.height = dims[3];
+         output.width = dims[4];
+-    } else if (ivsr_model->model_type == VIDEOPROC) {
+-        output.channels = dims[1];
+-        output.height = dims[2];
+-        output.width = dims[3];
++    } else if (ivsr_model->model_type == VIDEOPROC || ivsr_model->model_type == EDSR) {
++        output.channels = dims[2];
++        output.height = dims[3];
++        output.width = dims[4];
+     } else {
+         av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
+         return;
+@@ -329,7 +338,7 @@ static void infer_completion_callback(void *args)
+                         for (int ch = 0; ch < output.channels; ch++) {
+                             ((float*)output.data)[(pos * output.channels + ch)] =
+                                 ((float*)
+-                                     out_in_planar)[((output.channels - 1 - ch) * output.height * output.width + pos)];
++                                     out_in_planar)[((output.channels - 1 - ch) * output.height * output.width + pos)] / normalize_factor;
+                         }
+                     }
+                     ff_proc_from_dnn_to_frame(task->out_frame, &output,
+@@ -380,10 +389,10 @@ static int get_input_ivsr(void *model, DNNData * input,
+         input->height = dims[3];
+         input->width = dims[4];
+         input->dt = DNN_FLOAT;
+-    } else if (ivsr_model->model_type == VIDEOPROC) {
+-        input->channels = dims[1];
+-        input->height = dims[2];
+-        input->width = dims[3];
++    } else if (ivsr_model->model_type == VIDEOPROC || ivsr_model->model_type == EDSR) {
++        input->channels = dims[2];
++        input->height = dims[3];
++        input->width = dims[4];
+         input->dt = DNN_FLOAT;
+     } else {
+         av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
+@@ -521,9 +530,9 @@ static int get_output_ivsr(void *model, const char *input_name,
+     if (ivsr_model->model_type == BASICVSR) {
+         *output_height = dims[3];
+         *output_width = dims[4];
+-    } else if (ivsr_model->model_type == VIDEOPROC) {
+-        *output_height = dims[2];
+-        *output_width = dims[3];
++    } else if (ivsr_model->model_type == VIDEOPROC || ivsr_model->model_type == EDSR) {
++        *output_height = dims[3];
++        *output_width = dims[4];
+     } else {
+         av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
+         ret = DNN_GENERIC_ERROR;
+@@ -553,6 +562,7 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+     ivsr_config_t *config_device = NULL;
+     ivsr_config_t *config_customlib = NULL;
+     ivsr_config_t *config_cldnn = NULL;
++
+     int nif = 0;
+     int input_dims[5] = { 0, 0, 0, 0, 1 };
+     int output_dims[5] = { 0, 0, 0, 0, 1 };
+-- 
+2.34.1
+

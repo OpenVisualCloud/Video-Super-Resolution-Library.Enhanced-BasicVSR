@@ -1,0 +1,55 @@
+From 7c04451293c1d1edfde07a01c33182b0b9128e32 Mon Sep 17 00:00:00 2001
+From: no name <noname@example.com>
+Date: Thu, 21 Sep 2023 16:37:49 +0000
+Subject: [PATCH] Free ivsr model in deinit function
+
+---
+ libavfilter/dnn/dnn_backend_ivsr.c | 5 ++++-
+ libavfilter/vf_dnn_processing.c    | 1 +
+ 2 files changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/libavfilter/dnn/dnn_backend_ivsr.c b/libavfilter/dnn/dnn_backend_ivsr.c
+index c08807920a..b06fb95678 100644
+--- a/libavfilter/dnn/dnn_backend_ivsr.c
++++ b/libavfilter/dnn/dnn_backend_ivsr.c
+@@ -299,7 +299,6 @@ static void infer_completion_callback(void *args)
+                         }
+                         offset++;
+                     } while (offset != dims[2]);
+-                    task->out_frame = NULL;
+                 } else {
+                     ff_proc_from_dnn_to_frame(task->out_frame, &output,
+                                               &ivsr_model->model->
+@@ -851,6 +850,8 @@ void ff_dnn_free_model_ivsr(DNNModel ** model)
+ 
+         while (ff_queue_size(ivsr_model->task_queue) != 0) {
+             TaskItem *item = ff_queue_pop_front(ivsr_model->task_queue);
++            av_frame_free(&item->in_frame);
++            av_frame_free(&item->out_frame);
+             av_freep(&item);
+         }
+         ff_queue_destroy(ivsr_model->task_queue);
+@@ -865,6 +866,8 @@ void ff_dnn_free_model_ivsr(DNNModel ** model)
+             config = next;
+         }
+         av_freep(&handle);
++        av_freep(&ivsr_model);
++        av_freep(model);
+     }
+     return;
+ }
+diff --git a/libavfilter/vf_dnn_processing.c b/libavfilter/vf_dnn_processing.c
+index f33d281fe1..d4f98985f4 100644
+--- a/libavfilter/vf_dnn_processing.c
++++ b/libavfilter/vf_dnn_processing.c
+@@ -396,6 +396,7 @@ static int activate(AVFilterContext *filter_ctx)
+             AVFrame *out_frame = NULL;
+             async_state = ff_dnn_get_result(&ctx->dnnctx, &in_frame, &out_frame);
+             if(async_state == DAST_SUCCESS) {
++                av_frame_free(&in_frame);
+                 for (int i = 0; i < ctx->dnnctx.nif; i++) {
+                     av_fifo_read(ctx->dnnctx.out_queue, &out_frame, 1);
+                     ret = ff_filter_frame(outlink, out_frame);
+-- 
+2.34.1
+

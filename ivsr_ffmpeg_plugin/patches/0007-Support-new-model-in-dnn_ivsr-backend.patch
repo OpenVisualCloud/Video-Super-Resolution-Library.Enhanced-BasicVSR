@@ -1,0 +1,187 @@
+From 6d84ee1c43becfa743f1948c765881afe6eb3fe7 Mon Sep 17 00:00:00 2001
+From: Liang <xiaoxia.liang@intel.com>
+Date: Thu, 28 Mar 2024 00:59:42 +0800
+Subject: [PATCH] Support new model in dnn_ivsr backend
+
+Signed-off-by: Liang <xiaoxia.liang@intel.com>
+---
+ libavfilter/dnn/dnn_backend_ivsr.c | 100 +++++++++++++++++++----------
+ 1 file changed, 67 insertions(+), 33 deletions(-)
+
+diff --git a/libavfilter/dnn/dnn_backend_ivsr.c b/libavfilter/dnn/dnn_backend_ivsr.c
+index 21e2eb1dc9..5919e51ab5 100644
+--- a/libavfilter/dnn/dnn_backend_ivsr.c
++++ b/libavfilter/dnn/dnn_backend_ivsr.c
+@@ -59,6 +59,7 @@ typedef enum {
+     BASICVSR,
+     VIDEOPROC,
+     EDSR,
++    CUSTVSR,
+     MODEL_TYPE_NUM
+ } ModelType;
+ 
+@@ -140,7 +141,8 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+         input.height = dims[3];
+         input.width = dims[4];
+         input.dt = DNN_FLOAT;
+-    } else if (ivsr_model->model_type == VIDEOPROC || ivsr_model->model_type == EDSR) {
++    } else if (ivsr_model->model_type == VIDEOPROC || ivsr_model->model_type == EDSR
++                || ivsr_model->model_type == CUSTVSR) {
+         input.channels = dims[2];
+         input.height = dims[3];
+         input.width = dims[4];
+@@ -154,11 +156,14 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+     input.order = DCO_BGR;
+     in_data = input.data;
+ 
+-    in_in_packed =
+-        av_malloc(input.height * input.width * input.channels *
+-                  sizeof(float));
+-    if (!in_in_packed)
+-        return AVERROR(ENOMEM);
++    if (input.channels != 1) {
++        in_in_packed =
++            av_malloc(input.height * input.width * input.channels *
++                      sizeof(float));
++        if (!in_in_packed)
++            return AVERROR(ENOMEM);
++    }
++
+ 
+     for (int i = 0; i < ctx->options.batch_size; ++i) {
+         lltask = ff_queue_pop_front(ivsr_model->lltask_queue);
+@@ -218,13 +223,24 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+                     ff_proc_from_frame_to_dnn(task->in_frame, &input,
+                                               ivsr_model->model->
+                                               filter_ctx);
+-                    memcpy((uint8_t*)in_in_packed,
+-                           (uint8_t*)input.data,
+-                           input.height * input.width * input.channels * sizeof(float));
+-                    for (int pos = 0; pos < input.height * input.width; pos++) {
+-                        for (int ch = 0; ch < input.channels; ch++) {
+-                            ((float*)input.data)[(ch * input.height * input.width + pos)] =
+-                                ((float*)in_in_packed)[(pos * input.channels + (input.channels - 1 - ch))] * normalize_factor;
++                    if (input.channels != 1) {
++                        // convert buffer from NHWC to NCHW and multiply normalize_factor
++                        memcpy((uint8_t*)in_in_packed,
++                                (uint8_t*)input.data,
++                                input.height * input.width * input.channels * sizeof(float));
++                        for (int pos = 0; pos < input.height * input.width; pos++) {
++                            for (int ch = 0; ch < input.channels; ch++) {
++                                ((float*)input.data)[(ch * input.height * input.width + pos)] =
++                                    ((float*)in_in_packed)[(pos * input.channels + (input.channels - 1 - ch))] * normalize_factor;
++                            }
++                        }
++                    } else if (normalize_factor != 1) {
++                        // do not need to covert buffer from NHWC to NCHW if the channels is 1, only need to mulitple normalize_factor
++                        for (int pos = 0; pos < input.height * input.width; pos++) {
++                            for (int ch = 0; ch < input.channels; ch++) {
++                                ((float*)input.data)[(ch * input.height * input.width + pos)] =
++                                    ((float*)input.data)[ch * input.height * input.width + pos] * normalize_factor;
++                            }
+                         }
+                     }
+                 }
+@@ -266,7 +282,8 @@ static void infer_completion_callback(void *args)
+         output.channels = dims[1];
+         output.height = dims[3];
+         output.width = dims[4];
+-    } else if (ivsr_model->model_type == VIDEOPROC || ivsr_model->model_type == EDSR) {
++    } else if (ivsr_model->model_type == VIDEOPROC || ivsr_model->model_type == EDSR
++                || ivsr_model->model_type == CUSTVSR) {
+         output.channels = dims[2];
+         output.height = dims[3];
+         output.width = dims[4];
+@@ -277,15 +294,17 @@ static void infer_completion_callback(void *args)
+     output.dt = DNN_FLOAT;
+     output.data = request->out_frames;
+ 
+-    out_in_planar =
+-        av_malloc(output.height * output.width * output.channels *
+-                  sizeof(float));
+-    if (!out_in_planar) {
+-        av_log(ctx, AV_LOG_ERROR,
+-               "Failed to allocate array with %ld bytes!\n",
+-               output.height * output.width * output.channels *
+-               sizeof(float));
+-        return;
++    if (output.channels != 1) {
++        out_in_planar =
++            av_malloc(output.height * output.width * output.channels *
++                    sizeof(float));
++        if (!out_in_planar) {
++                av_log(ctx, AV_LOG_ERROR,
++                       "Failed to allocate array with %ld bytes!\n",
++                       output.height * output.width * output.channels *
++                       sizeof(float));
++            return;
++        }
+     }
+ 
+     av_assert0(request->lltask_count <= dims[0]);
+@@ -332,14 +351,25 @@ static void infer_completion_callback(void *args)
+                         offset++;
+                     } while (offset != dims[2]);
+                 } else {
+-                    memcpy((uint8_t*)out_in_planar,
+-                           (uint8_t*)output.data,
+-                           output.height * output.width * output.channels * sizeof(float));
+-                    for (int pos = 0; pos < output.height * output.width; pos++) {
+-                        for (int ch = 0; ch < output.channels; ch++) {
+-                            ((float*)output.data)[(pos * output.channels + ch)] =
+-                                ((float*)
+-                                     out_in_planar)[((output.channels - 1 - ch) * output.height * output.width + pos)] / normalize_factor;
++                    if (output.channels != 1) {
++                        //convert buffer from NCHW to NHWC
++                        memcpy((uint8_t*)out_in_planar,
++                                (uint8_t*)output.data,
++                                output.height * output.width * output.channels * sizeof(float));
++                        for (int pos = 0; pos < output.height * output.width; pos++) {
++                            for (int ch = 0; ch < output.channels; ch++) {
++                                ((float*)output.data)[(pos * output.channels + ch)] =
++                                    ((float*)
++                                        out_in_planar)[((output.channels - 1 - ch) * output.height * output.width + pos)] / normalize_factor;
++                            }
++                        }
++                    } else if (normalize_factor != 1) {
++                        // only need to devide by normalize_factor for channels = 1.
++                        for (int pos = 0; pos < output.height * output.width; pos++) {
++                            for (int ch = 0; ch < output.channels; ch++) {
++                                ((float*)output.data)[(pos * output.channels + ch)] =
++                                    ((float*)output.data)[pos * output.channels + ch] / normalize_factor;
++                            }
+                         }
+                     }
+                     ff_proc_from_dnn_to_frame(task->out_frame, &output,
+@@ -390,7 +420,8 @@ static int get_input_ivsr(void *model, DNNData * input,
+         input->height = dims[3];
+         input->width = dims[4];
+         input->dt = DNN_FLOAT;
+-    } else if (ivsr_model->model_type == VIDEOPROC || ivsr_model->model_type == EDSR) {
++    } else if (ivsr_model->model_type == VIDEOPROC || ivsr_model->model_type == EDSR
++                || ivsr_model->model_type == CUSTVSR) {
+         input->channels = dims[2];
+         input->height = dims[3];
+         input->width = dims[4];
+@@ -531,7 +562,8 @@ static int get_output_ivsr(void *model, const char *input_name,
+     if (ivsr_model->model_type == BASICVSR) {
+         *output_height = dims[3];
+         *output_width = dims[4];
+-    } else if (ivsr_model->model_type == VIDEOPROC || ivsr_model->model_type == EDSR) {
++    } else if (ivsr_model->model_type == VIDEOPROC || ivsr_model->model_type == EDSR
++                || ivsr_model->model_type == CUSTVSR) {
+         *output_height = dims[3];
+         *output_width = dims[4];
+     } else {
+@@ -666,6 +698,8 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+         sprintf(shape_string, "1,3,3,%d,%d", frame_h, frame_w);
+     } else if (ivsr_model->model_type == VIDEOPROC || ivsr_model->model_type == EDSR) {
+         sprintf(shape_string, "1,3,%d,%d", frame_h, frame_w);
++    } else if (ivsr_model->model_type == CUSTVSR) {
++        sprintf(shape_string, "1,1,%d,%d", frame_h, frame_w);
+     } else {
+         av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
+         return DNN_GENERIC_ERROR;
+-- 
+2.34.1
+

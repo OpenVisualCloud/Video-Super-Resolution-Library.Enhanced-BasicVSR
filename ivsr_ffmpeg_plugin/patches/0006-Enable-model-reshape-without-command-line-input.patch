@@ -1,0 +1,98 @@
+From 8f4468c1b34cb17a9e1ad99b79bd5411b034f997 Mon Sep 17 00:00:00 2001
+From: xueshuwa <xueshu.wang@intel.com>
+Date: Wed, 20 Mar 2024 23:44:01 +0800
+Subject: [PATCH] Enable model reshape without command line input
+
+---
+ /libavfilter/dnn/dnn_backend_ivsr.c                        | 27 ++++++++++++++++++-
+ /libavfilter/vf_dnn_processing.c                           |  8 +++++-
+ 2 files changed, 33 insertions(+), 2 deletions(-)
+
+diff --git a/libavfilter/dnn/dnn_backend_ivsr.c b/libavfilter/dnn/dnn_backend_ivsr.c
+index ed9de07..ffa64f9 100644
+--- a/libavfilter/dnn/dnn_backend_ivsr.c
++++ b/libavfilter/dnn/dnn_backend_ivsr.c
+@@ -46,6 +46,7 @@ typedef struct IVSROptions {
+     char *op_xml;
+     int model_type;
+     float normalize_factor;
++    char *reshape_values;
+ } IVSROptions;
+ 
+ typedef struct IVSRContext {
+@@ -562,7 +563,7 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+     ivsr_config_t *config_device = NULL;
+     ivsr_config_t *config_customlib = NULL;
+     ivsr_config_t *config_cldnn = NULL;
+-
++    ivsr_config_t *config_reshape = NULL;
+     int nif = 0;
+     int input_dims[5] = { 0, 0, 0, 0, 1 };
+     int output_dims[5] = { 0, 0, 0, 0, 1 };
+@@ -650,6 +651,30 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+     config_cldnn->next = NULL;
+     config_customlib->next = config_cldnn;
+ 
++    // reshape setting
++    config_reshape = av_mallocz(sizeof(ivsr_config_t));
++    if (config_reshape == NULL) {
++        av_log(ctx, AV_LOG_ERROR, "Failed to malloc reshape config\n");
++        goto err;
++    }
++    AVFilterLink *inlink = filter_ctx->inputs[0];
++    int frame_h = inlink->h;
++    int frame_w = inlink->w;
++
++    char shape_string[40];
++    if (ivsr_model->model_type == BASICVSR) {
++        sprintf(shape_string, "1,3,3,%d,%d", frame_h, frame_w);
++    } else if (ivsr_model->model_type == VIDEOPROC || ivsr_model->model_type == EDSR) {
++        sprintf(shape_string, "1,3,%d,%d", frame_h, frame_w);
++    } else {
++        av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
++        return DNN_GENERIC_ERROR;
++    }
++    config_reshape->key = RESHAPE_SETTINGS;
++    config_reshape->value = shape_string;
++    config_reshape->next = NULL;
++    config_cldnn->next = config_reshape;
++
+     // initialize ivsr
+     status = ivsr_init(config, &ivsr_model->handle);
+     if (status != OK) {
+diff --git a/libavfilter/vf_dnn_processing.c b/libavfilter/vf_dnn_processing.c
+index d4f9898..3e2905f 100644
+--- a/libavfilter/vf_dnn_processing.c
++++ b/libavfilter/vf_dnn_processing.c
+@@ -77,7 +77,7 @@ static av_cold int init(AVFilterContext *context)
+     ctx->dnnctx.out_queue = av_fifo_alloc2(MAX_PROCESSING_QUEUE, sizeof(AVFrame *), AV_FIFO_FLAG_AUTO_GROW);
+     if (!ctx->dnnctx.out_queue)
+         return AVERROR(ENOMEM);
+-    return ff_dnn_init(&ctx->dnnctx, DFT_PROCESS_FRAME, context);
++    return 0;
+ }
+ 
+ static const enum AVPixelFormat pix_fmts[] = {
+@@ -90,6 +90,7 @@ static const enum AVPixelFormat pix_fmts[] = {
+     AV_PIX_FMT_NONE
+ #else
+     AV_PIX_FMT_BGR24,
++    AV_PIX_FMT_YUV420P,
+     AV_PIX_FMT_NONE
+ #endif
+ };
+@@ -158,6 +159,11 @@ static int config_input(AVFilterLink *inlink)
+     int result;
+     DNNData model_input;
+     int check;
++    result = ff_dnn_init(&ctx->dnnctx, DFT_PROCESS_FRAME, context);
++    if (result != 0) {
++        av_log(ctx, AV_LOG_ERROR, "could not initialize dnn module\n");
++        return result;
++    }
+ 
+     result = ff_dnn_get_input(&ctx->dnnctx, &model_input);
+     if (result != 0) {
+-- 
+2.34.1
+

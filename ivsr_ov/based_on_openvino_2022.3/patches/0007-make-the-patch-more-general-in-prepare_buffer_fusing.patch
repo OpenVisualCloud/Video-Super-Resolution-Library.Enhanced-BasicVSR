@@ -1,0 +1,41 @@
+From 27db28e7a1307cc11f0c950aad809641052d995b Mon Sep 17 00:00:00 2001
+From: KunLong9 <kun.long@intel.com>
+Date: Fri, 5 May 2023 14:23:44 +0800
+Subject: [PATCH 7/7] make the patch more general in prepare_buffer_fusing.cpp
+
+---
+ .../graph/graph_optimizer/prepare_buffer_fusing.cpp   | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/src/plugins/intel_gpu/src/graph/graph_optimizer/prepare_buffer_fusing.cpp b/src/plugins/intel_gpu/src/graph/graph_optimizer/prepare_buffer_fusing.cpp
+index 58426f2d69..78dc5f53b9 100644
+--- a/src/plugins/intel_gpu/src/graph/graph_optimizer/prepare_buffer_fusing.cpp
++++ b/src/plugins/intel_gpu/src/graph/graph_optimizer/prepare_buffer_fusing.cpp
+@@ -189,7 +189,7 @@ bool concat_in_place_optimization::match(concatenation_node& node) {
+             !input.first->is_type<concatenation>() && !input.first->is_type<crop>() && !input.first->is_type<eltwise>() &&
+             !input.first->is_type<resample>())
+             return false;
+-
++        
+         // if an input is marked as network output, prevent optimizations
+         // which would affect a form of its output (unless debug flag is set),
+         // we also need to restrict input types to those which support padding on all axis
+@@ -284,6 +284,15 @@ void concat_in_place_optimization::optimize_cascade(concatenation_node& node, st
+         //   |-- output padd ---| ----- input1 ------|----- input2 -----|-- out padd --|
+         upper_padd[concat_axis_legacy] -= input_length;
+ 
++        // @longkun: temporarily walk-around for Concat_852 Concat_718 Concat_785 optimization
++        GPU_DEBUG_GET_INSTANCE(debug_config); 
++        if(upper_padd[concat_axis_legacy] / input_length > 0.5){
++            GPU_DEBUG_IF(debug_config->verbose >= 2) {
++                GPU_DEBUG_COUT << input.first->id() << " over padded with rate: " << upper_padd[concat_axis_legacy] / input_length << " stop concat optimization"<<std::endl;
++            }
++            return ;
++        }
++        
+         // set new padding for input
+         input.first->set_output_padding(padding(lower_padd, upper_padd));
+ 
+-- 
+2.25.1
+

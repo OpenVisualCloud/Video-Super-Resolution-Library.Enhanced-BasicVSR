@@ -1,0 +1,2290 @@
+From e3e4b080ea4cc0acbe6a32aaa1de7e734884c160 Mon Sep 17 00:00:00 2001
+From: windy058 <yang.zheng@intel.com>
+Date: Wed, 15 Mar 2023 15:45:29 +0800
+Subject: [PATCH 3/7] Revert "Vsr opt ov22.3 (#25)" (#28)
+
+This reverts commit f0276924b7b4d7f1b8a014683ff6f944a7380588.
+---
+ release-openvino/asset/empty/README           |   1 -
+ release-openvino/asset/setup.py               |  41 --
+ .../docker/ubuntu22.04/Dockerfile             | 151 -----
+ release-openvino/readme.md                    |   7 -
+ release-openvino/script/ubuntu/build.sh       | 582 ------------------
+ .../docker/ubuntu22.04/main/Dockerfile        | 178 ------
+ release-pytorch/readme.md                     |   6 -
+ release-pytorch/script/ubuntu/build.sh        | 395 ------------
+ release-pytorch/tools/.gitignore              |   4 -
+ .../tools/resnet50-convert/README.md          |   9 -
+ .../tools/resnet50-convert/convert.sh         |  34 -
+ .../tools/yolov4-convert/README.md            |  10 -
+ .../tools/yolov4-convert/convert.sh           |  43 --
+ .../tools/yolov4-convert/save_model.sh        |  49 --
+ .../yolov4-convert/yolov4_save_model.patch    |  60 --
+ scripts/.gitignore                            |   3 -
+ scripts/bkc_script_update.sh                  |  18 -
+ scripts/build-openvino-docker-ubuntu.sh       | 141 -----
+ scripts/build-pytorch-docker-ubuntu.sh        | 153 -----
+ scripts/build-pytorch-testdocker.sh           |  62 --
+ scripts/env.sh                                |  17 -
+ scripts/gpg                                   |  62 --
+ scripts/run-docker.sh                         |  24 -
+ vsr_opt/VSR Introduction.md                   |  13 +-
+ 24 files changed, 2 insertions(+), 2061 deletions(-)
+ delete mode 100644 release-openvino/asset/empty/README
+ delete mode 100644 release-openvino/asset/setup.py
+ delete mode 100644 release-openvino/docker/ubuntu22.04/Dockerfile
+ delete mode 100644 release-openvino/readme.md
+ delete mode 100755 release-openvino/script/ubuntu/build.sh
+ delete mode 100644 release-pytorch/docker/ubuntu22.04/main/Dockerfile
+ delete mode 100644 release-pytorch/readme.md
+ delete mode 100755 release-pytorch/script/ubuntu/build.sh
+ delete mode 100644 release-pytorch/tools/.gitignore
+ delete mode 100644 release-pytorch/tools/resnet50-convert/README.md
+ delete mode 100755 release-pytorch/tools/resnet50-convert/convert.sh
+ delete mode 100644 release-pytorch/tools/yolov4-convert/README.md
+ delete mode 100755 release-pytorch/tools/yolov4-convert/convert.sh
+ delete mode 100755 release-pytorch/tools/yolov4-convert/save_model.sh
+ delete mode 100644 release-pytorch/tools/yolov4-convert/yolov4_save_model.patch
+ delete mode 100644 scripts/.gitignore
+ delete mode 100755 scripts/bkc_script_update.sh
+ delete mode 100755 scripts/build-openvino-docker-ubuntu.sh
+ delete mode 100755 scripts/build-pytorch-docker-ubuntu.sh
+ delete mode 100755 scripts/build-pytorch-testdocker.sh
+ delete mode 100755 scripts/env.sh
+ delete mode 100644 scripts/gpg
+ delete mode 100755 scripts/run-docker.sh
+
+diff --git a/release-openvino/asset/empty/README b/release-openvino/asset/empty/README
+deleted file mode 100644
+index d142260e08..0000000000
+--- a/release-openvino/asset/empty/README
++++ /dev/null
+@@ -1 +0,0 @@
+-keep empty
+diff --git a/release-openvino/asset/setup.py b/release-openvino/asset/setup.py
+deleted file mode 100644
+index e9a9144fc3..0000000000
+--- a/release-openvino/asset/setup.py
++++ /dev/null
+@@ -1,41 +0,0 @@
+-#!/usr/bin/env python3
+-
+-"""
+-DL Streamer Python Tools
+-
+-DL Streamer is a streaming media analytics framework based on GStreamer*
+-multimedia framework, for creating complex media analytics pipelines.
+-It ensures pipeline interoperability and provides optimized media,
+-and inference operations using Intel OpenVINO Toolkit Inference Engine
+-backend.
+-"""
+-
+-import pathlib
+-from setuptools import setup, find_packages
+-
+-
+-PYTHON_PROJECT = pathlib.Path(__file__).parent.resolve()
+-
+-version = (PYTHON_PROJECT / "build" / "version.txt").read_text(encoding="utf-8").rstrip()
+-long_description = (PYTHON_PROJECT / "README.md").read_text(encoding="utf-8")
+-
+-
+-setup(
+-    name="gstgva",
+-    version=version,
+-    author="Dmitry Rogozhkin",
+-    author_email="dmitry.v.rogozhkin@intel.com",
+-    description="DL Streamer Python Tools",
+-    long_description=long_description,
+-    long_description_content_type="text/markdown",
+-    url="https://github.com/openvinotoolkit/dlstreamer_gst.git",
+-    package_dir={"": "python"},
+-    packages=[
+-        "gstgva",
+-        "gstgva.audio"
+-    ],
+-    install_requires=[
+-        "numpy>=1.19.2",
+-        "opencv-python>=4.2.0.34",
+-    ]
+-)
+diff --git a/release-openvino/docker/ubuntu22.04/Dockerfile b/release-openvino/docker/ubuntu22.04/Dockerfile
+deleted file mode 100644
+index 0999889136..0000000000
+--- a/release-openvino/docker/ubuntu22.04/Dockerfile
++++ /dev/null
+@@ -1,151 +0,0 @@
+-# SPDX-License-Identifier: BSD 3-Clause License
+-#
+-# Copyright (c) 2022, Intel Corporation
+-# All rights reserved.
+-#
+-# Redistribution and use in source and binary forms, with or without
+-# modification, are permitted provided that the following conditions are met:
+-#
+-# * Redistributions of source code must retain the above copyright notice, this
+-#   list of conditions and the following disclaimer.
+-#
+-# * Redistributions in binary form must reproduce the above copyright notice,
+-#   this list of conditions and the following disclaimer in the documentation
+-#   and/or other materials provided with the distribution.
+-#
+-# * Neither the name of the copyright holder nor the names of its
+-#   contributors may be used to endorse or promote products derived from
+-#   this software without specific prior written permission.
+-#
+-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+-# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+-# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+-# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+-# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+-# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+-# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+-# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+-# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+-# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+-
+-ARG IMAGE=ubuntu:22.04
+-FROM $IMAGE AS base
+-
+-RUN apt-get update && \
+-  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+-    curl wget ca-certificates gpg-agent software-properties-common && \
+-  rm -rf /var/lib/apt/lists/*
+-
+-SHELL ["/bin/bash", "-c"]
+-
+-ARG BKC_PATH=release-openvino/asset/empty
+-ARG GFX_DRIVER=jammy
+-
+-RUN mkdir -p /opt/build/bkc-sg2
+-COPY ${BKC_PATH} /opt/build/bkc-sg2
+-RUN if [[ $BKC_PATH != "release-openvino/asset/empty" ]]; then \
+-    bash /opt/build/bkc-sg2/_install.sh install_media && \
+-    bash /opt/build/bkc-sg2/_install.sh install_opencl && \
+-    bash /opt/build/bkc-sg2/_install.sh install_level_zero && \
+-    apt --fix-broken install -y; \
+-  fi
+-
+-RUN if [[ $BKC_PATH != "release-openvino/asset/empty" ]]; then \
+-    exit 0; \
+-  fi && \
+-  echo $GFX_DRIVER && \
+-  if [[ $GFX_DRIVER == jammy* ]]; then \
+-    wget -qO - https://repositories.intel.com/graphics/intel-graphics.key | gpg --dearmor --output /usr/share/keyrings/intel-graphics.gpg && \
+-  echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/graphics/ubuntu jammy flex" | \
+-    tee /etc/apt/sources.list.d/intel.gpu.jammy.list; \
+-  fi && \
+-  if [[ $GFX_DRIVER =~ agama ]]; then \
+-    curl --noproxy '*' -fsSL https://gfx-assets-build.intel.com/artifactory/api/gpg/key/public | apt-key add - && \
+-    add-apt-repository "deb https://gfx-assets-build.intel.com/artifactory/gfx-debs-per-build untested/main/agama/devel/jammy ${GFX_DRIVER}"; \
+-  fi && \
+-  apt-get update && \
+-  DEBIAN_FRONTEND=noninteractive apt-get install -y \
+-    intel-opencl-icd libvpl2 \
+-    intel-level-zero-gpu level-zero-dev \
+-    intel-media-va-driver-non-free libva-dev && \
+-  rm -rf /var/lib/apt/lists/*
+-
+-# openvino
+-RUN apt-get update && \
+-        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+-            ca-certificates \
+-            curl \
+-            cmake \
+-            cython3 \
+-            flex \
+-            bison \
+-            gcc \
+-            g++ \
+-            git \
+-            libdrm-dev \
+-            libudev-dev \
+-            python-gi-dev \
+-            libboost-all-dev \
+-            libgtk2.0-dev \
+-            libgtk-3-dev \
+-            libtool \
+-            libusb-1.0-0-dev \
+-            make \
+-            patch \
+-            python3 \
+-            pkg-config \
+-            python3-yaml \
+-            xz-utils \
+-            ocl-icd-opencl-dev \
+-            opencl-headers && \
+-    rm -rf /var/lib/apt/lists/*
+-
+-#build openvino
+-RUN git clone https://github.com/openvinotoolkit/openvino.git
+-  git submodule update --init --recursive && \
+-  chmod +x scripts/submodule_update_with_gitee.sh && \
+-  ./scripts/submodule_update_with_gitee.sh && \
+-  chmod +x install_build_dependencies.sh && \
+-  ./install_build_dependencies.sh
+-
+-
+-RUN apt-get install python3-dev
+-RUN pip install cython
+-
+-RUN mkdir build && cd build && \
+-  cmake \
+-    -DCMAKE_INSTALL_PREFIX=${PWD}/../install \
+-    -DENABLE_INTEL_CPU=ON \
+-    -DENABLE_CLDNN=ON \
+-    -DENABLE_INTEL_GPU=ON \
+-    -DENABLE_ONEDNN_FOR_GPU=OFF \
+-    -DENABLE_INTEL_GNA=OFF \
+-    -DENABLE_INTEL_MYRIAD_COMMON=OFF \
+-    -DENABLE_INTEL_MYRIAD=OFF \
+-    -DENABLE_PYTHON=ON \
+-    -DENABLE_OPENCV=ON \
+-    -DENABLE_SAMPLES=ON \
+-    -DENABLE_CPPLINT=OFF \
+-    -DTREAT_WARNING_AS_ERROR=OFF \
+-    -DENABLE_TESTS=OFF \
+-    -DENABLE_GAPI_TESTS=OFF \
+-    -DENABLE_BEH_TESTS=OFF \
+-    -DENABLE_FUNCTIONAL_TESTS=OFF \
+-    -DENABLE_OV_CORE_UNIT_TESTS=OFF \
+-    -DENABLE_OV_CORE_BACKEND_UNIT_TESTS=OFF \
+-    -DENABLE_DEBUG_CAPS=ON \
+-    -DENABLE_GPU_DEBUG_CAPS=ON \
+-    -DENABLE_CPU_DEBUG_CAPS=ON \
+-    -DCMAKE_BUILD_TYPE=$1 \
+-    .. && \
+-  make -j`nproc` && \
+-  make install
+-
+-RUN pip install torch
+-RUN pip install torchvision
+-
+-
+-
+-
+-WORKDIR /home
+-CMD ["/bin/bash"]
+diff --git a/release-openvino/readme.md b/release-openvino/readme.md
+deleted file mode 100644
+index 3d4cacb090..0000000000
+--- a/release-openvino/readme.md
++++ /dev/null
+@@ -1,7 +0,0 @@
+-
+-```bash
+-# Build and run openvino docker
+-cd <PATH_TO_THIS_PROJECT>/script
+-bash build-openvino-docker-ubuntu.sh
+-docker run --user root -it --name <name> --device=/dev/dri/renderD128 --cap-add SYS_ADMIN -v /dev/dri/by-path:/dev/dri/by-path -v /sys:/sys -v /home/:/home <dockerimgae_name>:tag /bin/bash
+-```
+\ No newline at end of file
+diff --git a/release-openvino/script/ubuntu/build.sh b/release-openvino/script/ubuntu/build.sh
+deleted file mode 100755
+index 5af1fdaf1c..0000000000
+--- a/release-openvino/script/ubuntu/build.sh
++++ /dev/null
+@@ -1,582 +0,0 @@
+-# SPDX-License-Identifier: BSD 3-Clause License
+-#
+-# Copyright (c) 2022, Intel Corporation
+-# All rights reserved.
+-#
+-# Redistribution and use in source and binary forms, with or without
+-# modification, are permitted provided that the following conditions are met:
+-#
+-# * Redistributions of source code must retain the above copyright notice, this
+-#   list of conditions and the following disclaimer.
+-#
+-# * Redistributions in binary form must reproduce the above copyright notice,
+-#   this list of conditions and the following disclaimer in the documentation
+-#   and/or other materials provided with the distribution.
+-#
+-# * Neither the name of the copyright holder nor the names of its
+-#   contributors may be used to endorse or promote products derived from
+-#   this software without specific prior written permission.
+-#
+-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+-# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+-# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+-# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+-# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+-# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+-# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+-# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+-# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+-# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+-
+-#!/bin/bash -ex
+-
+-# this support ubuntu22.04 only
+-
+-DLDT_REPO=https://github.com/openvinotoolkit/openvino.git
+-GVA_REPO=https://github.com/openvinotoolkit/dlstreamer_gst.git
+-# tag: v2022.3.0
+-DLDT_COMMIT=9752fafe8ebf7e30dfea7edd447ff3bf0ac1d01d
+-# tag: v2.7.2
+-ONEDNN_COMMIT=fbec3e25a559ee252022ae066817b204e106a6ba
+-# tag: 2022.2-release
+-GVA_COMMIT=d84d7497b45ad4912d60275a584442166a81aee7
+-MESON_REPO=https://github.com/mesonbuild/meson
+-GSTCORE_REPO=https://github.com/GStreamer/gstreamer/archive/1.20.3.tar.gz
+-
+-BASEPATH=$(cd `dirname $0`; pwd)
+-PATCH_PATH="$BASEPATH/../../patch"
+-WORKLOADS_PATH="$BASEPATH/../../../workloads"
+-LIB_INSTALL_DIR=/opt/intel/vsr
+-BUILD_DIR=${BASEPATH}/build
+-GFX_DRIVER=jammy
+-WITH_PATCH=1
+-OUTPUT_PACKAGE=0
+-
+-RSTCOL='\e[0m'
+-GREEN='\e[0;32m'
+-
+-env_init()
+-{
+-    cd $BASEPATH
+-
+-    if [ ! -e $PATCH_PATH ]; then
+-        echo "fail to find patch at $PATCH_PATH"
+-        exit 1
+-    fi
+-
+-    ###Create related working directory###
+-    mkdir -p $BUILD_DIR
+-    if [ ! -d $LIB_INSTALL_DIR ]; then
+-        sudo mkdir -p $LIB_INSTALL_DIR
+-        sudo chown -R $USER $LIB_INSTALL_DIR
+-    elif [ ! -w $LIB_INSTALL_DIR ]; then
+-        echo "Error, the current user does not have $LIB_INSTALL_DIR Access"
+-        exit 1
+-    fi
+-
+-    sudo apt --fix-broken install -y
+-    sudo apt-get update && \
+-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+-        git wget curl gpg-agent curl wget ca-certificates software-properties-common \
+-        cmake gcc g++ make pkg-config tar yasm \
+-        python3-pip ninja-build libx264-dev libx265-dev nasm \
+-        python3-setuptools python3-wheel
+-}
+-
+-build_dpcpp()
+-{
+-    #install dpcpp
+-    curl https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | sudo apt-key add - && \
+-        sudo add-apt-repository "deb https://apt.repos.intel.com/oneapi all main" && \
+-        sudo apt-get update
+-    sudo apt-get install -y intel-oneapi-compiler-dpcpp-cpp-2022.2.0
+-}
+-
+-check_status()
+-{
+-    #Check whether script is in the git directory
+-    git status > /dev/null && \
+-    if [ $? -eq 0 ];then
+-        echo "this script can't be launched in a git repo"
+-        exit 0
+-    fi
+-}
+-
+-build_meson()
+-{
+-    rm -rf $BUILD_DIR/meson
+-    cd $BUILD_DIR && \
+-    git clone ${MESON_REPO} && \
+-        cd meson && \
+-        git checkout 0.63.0 && \
+-        sudo python3 setup.py install
+-}
+-
+-build_openvino()
+-{
+-    check_status
+-    rm -rf $BUILD_DIR/openvino
+-    export PKG_CONFIG_PATH=$LIB_INSTALL_DIR/lib/pkgconfig
+-    export CMAKE_PREFIX_PATH=$LIB_INSTALL_DIR/lib/cmake
+-
+-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+-        cython3 libdrm-dev libudev-dev python-gi-dev \
+-        libboost-all-dev libgtk2.0-dev \
+-        libgtk-3-dev libtool libusb-1.0-0-dev patch python3 python3-yaml \
+-        xz-utils ocl-icd-opencl-dev opencl-headers
+-
+-    git clone ${DLDT_REPO} $BUILD_DIR/openvino && \
+-    cd $BUILD_DIR/openvino && \
+-    git checkout  ${DLDT_COMMIT} && \
+-    git submodule update --init --recursive
+-
+-    if [ ${WITH_PATCH} -eq 1 ]; then
+-        cd $BUILD_DIR/openvino && \
+-            ( for file in `ls ${PATCH_PATH}/openvino/*.patch`; do \
+-            ls -al $file; \
+-            git apply $file || exit 1; \
+-            done )
+-    fi
+-
+-    cd $BUILD_DIR/openvino/src/plugins/intel_gpu/thirdparty/onednn_gpu/ && \
+-        git checkout ${ONEDNN_COMMIT} && \
+-        if [ ${WITH_PATCH} -eq 1 ]; then
+-            ( for file in `ls ${PATCH_PATH}/onednn/*.patch`; do \
+-            ls -al $file; \
+-            git apply $file || exit 1; \
+-            done )
+-        fi
+-
+-    cd $BUILD_DIR/openvino && \
+-    mkdir build && cd build && \
+-    cmake \
+-        -DCMAKE_INSTALL_PREFIX=$LIB_INSTALL_DIR/dldt/ \
+-        -DENABLE_INTEL_CPU=OFF \
+-        -DENABLE_CLDNN=ON \
+-        -DENABLE_INTEL_GPU=ON \
+-        -DENABLE_ONEDNN_FOR_GPU=ON \
+-        -DENABLE_INTEL_GNA=OFF \
+-        -DENABLE_INTEL_MYRIAD_COMMON=OFF \
+-        -DENABLE_INTEL_MYRIAD=OFF \
+-        -DENABLE_PYTHON=ON \
+-        -DENABLE_OPENCV=ON \
+-        -DENABLE_SAMPLES=ON \
+-        -DENABLE_CPPLINT=OFF \
+-        -DTREAT_WARNING_AS_ERROR=ON \
+-        -DENABLE_TESTS=OFF \
+-        -DENABLE_GAPI_TESTS=OFF \
+-        -DENABLE_BEH_TESTS=OFF \
+-        -DENABLE_FUNCTIONAL_TESTS=OFF \
+-        -DENABLE_OV_CORE_UNIT_TESTS=OFF \
+-        -DENABLE_OV_CORE_BACKEND_UNIT_TESTS=OFF \
+-        -DCMAKE_BUILD_TYPE=Release \
+-        .. && \
+-    make -j`nproc` && \
+-    make install
+-
+-    if [ ${OUTPUT_PACKAGE} -eq 1 ]; then
+-        make install DESTDIR=/opt/intel/vsr-package/openvino_install_${BUILD_ID}_stable_Release && \
+-        tar cvzf /opt/build/vsr-release/openvino_install_${BUILD_ID}_stable_Release.tgz /opt/intel/vsr-package/openvino_install_${BUILD_ID}_stable_Release
+-    fi
+-
+-    if [[ $(find ${LIB_INSTALL_DIR} -name libopenvino_auto_plugin.so | wc -l) -lt 1 || $(find ${LIB_INSTALL_DIR} -name  libopenvino_intel_gpu_plugin.so | wc -l) -lt 1 ]]; then
+-        echo "openvino installation failed"
+-        exit 1
+-    fi
+-
+-    #init_benchmark_app
+-    cp -r $BUILD_DIR/openvino/bin/intel64/Release $LIB_INSTALL_DIR/tools
+-    cd $BUILD_DIR && rm -rf openvino
+-}
+-
+-build_opencv()
+-{
+-    rm -rf $BUILD_DIR/opencv-4.5.3-openvino-2021.4.2
+-    cd $BUILD_DIR && \
+-    wget -O - https://github.com/opencv/opencv/archive/4.5.3-openvino-2021.4.2.tar.gz | tar xz
+-
+-    cd $BUILD_DIR/opencv-4.5.3-openvino-2021.4.2 && mkdir build && cd build && \
+-    cmake \
+-        -DCMAKE_BUILD_TYPE=Release \
+-        -DCMAKE_INSTALL_PREFIX=$LIB_INSTALL_DIR \
+-        -DCMAKE_INSTALL_LIBDIR=lib \
+-        -DOPENCV_GENERATE_PKGCONFIG=ON \
+-        -DBUILD_DOCS=OFF \
+-        -DBUILD_EXAMPLES=OFF \
+-        -DBUILD_PERF_TESTS=OFF \
+-        -DBUILD_TESTS=OFF \
+-        -DWITH_OPENEXR=OFF \
+-        -DWITH_OPENJPEG=OFF \
+-        -DWITH_GSTREAMER=OFF \
+-        -DWITH_JASPER=OFF \
+-        -DWITH_FFMPEG=OFF \
+-        .. && \
+-    make -j "$(nproc)" && \
+-    make install
+-
+-    if [ ${OUTPUT_PACKAGE} -eq 1 ]; then
+-        make install DESTDIR=/opt/intel/vsr-package/opencv_install_${BUILD_ID}_stable_Release && \
+-        tar cvzf /opt/build/vsr-release/opencv_install_${BUILD_ID}_stable_Release.tgz /opt/intel/vsr-package/opencv_install_${BUILD_ID}_stable_Release
+-    fi
+-
+-    if [[ $(find ${LIB_INSTALL_DIR} -name libopencv_features2d.so.4.5.3 | wc -l) -lt 1 || $(find ${LIB_INSTALL_DIR} -name libopencv_imgcodecs.so.4.5.3 | wc -l) -lt 1 ]]; then
+-        echo "opencv installation failed"
+-        exit 1
+-    fi
+-    cd $BUILD_DIR && rm -rf opencv-4.5.3-openvino-2021.4.2
+-}
+-
+-build_gstreamer()
+-{
+-    check_status
+-    rm -rf $BUILD_DIR/gstreamer-1.20.3
+-    rm -rf $BUILD_DIR/gst-patch
+-    export PKG_CONFIG_PATH=$LIB_INSTALL_DIR/lib/pkgconfig
+-    export CMAKE_PREFIX_PATH=$LIB_INSTALL_DIR/lib/cmake
+-
+-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+-        libx11-dev libxv-dev libasound2-dev flex bison \
+-        libpango1.0-dev libtheora-dev libvisual-0.4-dev libgl1-mesa-dev \
+-        libglib2.0-dev libxt-dev libxt-dev \
+-        libgdk-pixbuf2.0-dev libjpeg-turbo8-dev libpng-dev \
+-        zlib1g-dev libsoup2.4-dev libvpx-dev \
+-        openssl libcurl4-gnutls-dev \
+-        librtmp-dev mjpegtools libx265-dev libde265-dev \
+-        libdrm-dev libudev-dev opencl-headers python3 \
+-        ocl-icd-opencl-dev python-gi-dev gobject-introspection \
+-        libgirepository1.0-dev python3-dev
+-
+-    # get codes of dlstreamer
+-    git clone ${GVA_REPO} $BUILD_DIR/gst-patch && \
+-        cd $BUILD_DIR/gst-patch && \
+-        git checkout ${GVA_COMMIT}
+-
+-    # build gst-core
+-    cd $BUILD_DIR && \
+-        wget -O - ${GSTCORE_REPO} | tar xz
+-
+-    # patch gst-vaapi with patches from dlstreamer
+-    cd $BUILD_DIR/gstreamer-1.20.3/subprojects/gstreamer-vaapi && \
+-    ( for file in `ls $BUILD_DIR/gst-patch/patches/gstreamer-vaapi/*.patch`; do \
+-    ls -al $file; \
+-    git apply $file || exit 1; \
+-    done )
+-
+-    cd $BUILD_DIR/gstreamer-1.20.3 && \
+-        meson build --libdir=$LIB_INSTALL_DIR/lib --libexecdir=$LIB_INSTALL_DIR/lib \
+-        --prefix=$LIB_INSTALL_DIR --buildtype=plain \
+-        -Dexamples=disabled \
+-        -Dtests=disabled \
+-        -Ddoc=disabled \
+-        -Dintrospection=enabled \
+-        -Dgtk_doc=disabled \
+-        -Dpython=enabled \
+-        -Dgst-python:libpython-dir=$LIB_INSTALL_DIR/lib \
+-        -Dcustom_subprojects="gst-plugins-base,gst-plugins-good,gst-plugins-bad,gst-plugins-ugly,gst-python" \
+-        -Dlibsoup:sysprof=disabled \
+-        -Dgpl=enabled \
+-        -Dlibav=disabled \
+-        -Dvaapi=enabled \
+-        -Dgstreamer-vaapi:with_drm=yes \
+-        -Dgstreamer-vaapi:with_x11=no \
+-        -Dgstreamer-vaapi:with_glx=no \
+-        -Dgstreamer-vaapi:with_wayland=no \
+-        -Dgstreamer-vaapi:with_egl=no && \
+-    cd build && \
+-    ninja install
+-
+-    if [ $(find ${LIB_INSTALL_DIR} -name libgstvaapi.so | wc -l) -lt 1 ]; then
+-        echo "gstreamer_vaapi installation failed"
+-        exit 1
+-    fi
+-
+-    cd $BUILD_DIR && rm -rf gstreamer-1.20.3 gst-patch
+-}
+-
+-build_dlstreamer()
+-{
+-    check_status
+-    rm -rf $BUILD_DIR/gst-video-analytics
+-    export PKG_CONFIG_PATH=$LIB_INSTALL_DIR/lib/pkgconfig
+-    export CMAKE_PREFIX_PATH=$LIB_INSTALL_DIR/lib/cmake
+-    CUSTOM_DLDT_INSTALL_DIR=$LIB_INSTALL_DIR/dldt
+-    CUSTOM_IE_DIR=${CUSTOM_DLDT_INSTALL_DIR}/runtime
+-    CUSTOM_IE_LIBDIR=${CUSTOM_IE_DIR}/lib/intel64
+-    export InferenceEngine_DIR=${CUSTOM_IE_DIR}/cmake
+-    export ngraph_DIR=${CUSTOM_IE_DIR}/cmake
+-
+-    # get codes of dlstreamer
+-    git clone ${GVA_REPO} $BUILD_DIR/gst-video-analytics && \
+-        cd $BUILD_DIR/gst-video-analytics && \
+-        git checkout ${GVA_COMMIT} && \
+-        git submodule update --init
+-
+-    #build dlstreamer
+-    if [ ${WITH_PATCH} -eq 1 ]; then
+-        cd $BUILD_DIR/gst-video-analytics && \
+-        ( for file in `ls $PATCH_PATH/dlstreamer/*.patch`; do \
+-        ls -al $file; \
+-        git apply $file || exit 1; \
+-        done )
+-    fi
+-    mkdir -p $BUILD_DIR/gst-video-analytics/build && \
+-    cd $BUILD_DIR/gst-video-analytics/build && \
+-    ( if [ -f "/opt/intel/oneapi/setvars.sh" ]; then \
+-    . /opt/intel/oneapi/setvars.sh ; \
+-    fi && \
+-    env && \
+-    cmake \
+-        -DCMAKE_INSTALL_PREFIX=$LIB_INSTALL_DIR \
+-        -DENABLE_SAMPLES=OFF \
+-        -DENABLE_TESTS=OFF \
+-        -DENABLE_PAHO_INSTALLATION=OFF \
+-        -DENABLE_RDKAFKA_INSTALLATION=OFF \
+-        -DENABLE_VAAPI=ON \
+-        -DENABLE_VAS_TRACKER=OFF \
+-        .. && \
+-    make -j $(nproc)) && \
+-    make install
+-
+-    if [ ${OUTPUT_PACKAGE} -eq 1 ]; then
+-        make install DESTDIR=/opt/intel/vsr-package/dlstreamer_install_${BUILD_ID}_stable_Release && \
+-        tar cvzf /opt/build/vsr-release/dlstreamer_install_${BUILD_ID}_stable_Release.tgz /opt/intel/vsr-package/dlstreamer_install_${BUILD_ID}_stable_Release
+-    fi
+-
+-    if [[ $(find ${LIB_INSTALL_DIR} -name libdlstreamer* | wc -l) -lt 1 ]]; then
+-        echo "dlstreamer installation failed"
+-        exit 1
+-    fi
+-
+-    #set ldconfig -- Shared dynamic library
+-    sudo sh -c "echo $CUSTOM_IE_LIBDIR > /etc/ld.so.conf.d/dldt.conf"
+-    sudo sh -c "echo $LIB_INSTALL_DIR/lib >> /etc/ld.so.conf.d/dldt.conf"
+-    sudo sh -c "echo /opt/intel/oneapi/tbb/2021.7.0/lib/intel64/gcc4.8/ >> /etc/ld.so.conf.d/dldt.conf"
+-    sudo sh -c "echo $LIB_INSTALL_DIR/tools >> /etc/ld.so.conf.d/dldt.conf"
+-    sudo sh -c "echo $CUSTOM_IE_DIR/3rdparty/tbb/lib >> /etc/ld.so.conf.d/dldt.conf"
+-    sudo sh -c "echo $LIB_INSTALL_DIR/tools/lib >> /etc/ld.so.conf.d/dldt.conf"
+-    sudo sh -c "echo $LIB_INSTALL_DIR/lib/gstreamer-1.0/ >> /etc/ld.so.conf.d/dldt.conf"
+-    sudo ldconfig
+-    cd $BUILD_DIR && rm -rf gst-video-analytics
+-}
+-
+-build_ffmpeg()
+-{
+-    export PKG_CONFIG_PATH=$LIB_INSTALL_DIR/lib/pkgconfig
+-    export CMAKE_PREFIX_PATH=$LIB_INSTALL_DIR/lib/cmake
+-
+-    rm -rf $BUILD_DIR/media-delivery
+-    pip3 install Cython3 numpy
+-    # get patch from media-delivery
+-    git clone https://github.com/intel/media-delivery.git $BUILD_DIR/media-delivery && \
+-    cd $BUILD_DIR/media-delivery && \
+-    git checkout d8b28d0bd63630094b64bc3756f98dd88231830f
+-
+-    rm -rf $BUILD_DIR/vmaf
+-    git clone --depth 1 --branch v2.2.1 https://github.com/Netflix/vmaf.git $BUILD_DIR/vmaf && \
+-    cp $BUILD_DIR/media-delivery/patches/vmaf/*.patch $BUILD_DIR/vmaf/ && \
+-    cd $BUILD_DIR/vmaf && { set -e; \
+-        for patch_file in $(find -iname "*.patch" | sort -n); do \
+-        echo "Applying: ${patch_file}"; \
+-        patch -p1 < ${patch_file}; \
+-    done; }
+-
+-    cd $BUILD_DIR/vmaf/libvmaf && \
+-    meson build \
+-        --prefix=$LIB_INSTALL_DIR \
+-        --libdir=$LIB_INSTALL_DIR/lib \
+-        --buildtype=release && \
+-    ninja -j $(nproc --all) -C build && \
+-    ninja -C build install
+-
+-
+-    git clone https://github.com/ffmpeg/ffmpeg $BUILD_DIR/ffmpeg && \
+-    cd $BUILD_DIR/ffmpeg && \
+-    git checkout f6a36c7
+-
+-    cp $BUILD_DIR/media-delivery/patches/ffmpeg/*.patch $BUILD_DIR/ffmpeg/ && \
+-    cd $BUILD_DIR/ffmpeg && { set -e; \
+-    for patch_file in $(find -iname "*.patch" | sort -n); do \
+-        echo "Applying: ${patch_file}"; \
+-        patch -p1 < ${patch_file}; \
+-    done; }
+-
+-    cd $BUILD_DIR/ffmpeg && \
+-    ./configure \
+-        --prefix=$LIB_INSTALL_DIR \
+-        --libdir=$LIB_INSTALL_DIR/lib \
+-        --disable-static \
+-        --disable-doc \
+-        --enable-shared \
+-        --enable-vaapi \
+-        --disable-libvpl \
+-        --enable-gpl \
+-        --enable-libx264 \
+-        --enable-libx265 \
+-        --enable-version3 \
+-        --enable-libvmaf \
+-        --disable-libdav1d && \
+-    make -j $(nproc --all) && \
+-    make install
+-}
+-
+-build_ffmpeg_sample()
+-{
+-    echo " ## build and install ffmpeg_sample ##"
+-
+-    cd $WORKLOADS_PATH/samples/ffmpeg_vaapi_openvino
+-    rm -rf build
+-    mkdir -p build
+-    cd build
+-    export PKG_CONFIG_PATH=$LIB_INSTALL_DIR/lib/pkgconfig
+-    export LD_LIBRARY_PATH=/opt/intel/oneapi/tbb/2021.7.0/lib/intel64/gcc4.8/:$LD_LIBRARY_PATH
+-    source $LIB_INSTALL_DIR/dldt/setupvars.sh
+-    export OpenCV_DIR=$LIB_INSTALL_DIR/lib/cmake/opencv4
+-    cmake -DCMAKE_INSTALL_PREFIX=$LIB_INSTALL_DIR/ffmpeg \
+-        -DCMAKE_BUILD_TYPE=Release -DLOG_LEVEL=2 \
+-        ..
+-    make -j`nproc`
+-    make install
+-
+-    if [ ${OUTPUT_PACKAGE} -eq 1 ]; then
+-        make install DESTDIR=/opt/intel/vsr-package/ffmpeg_sample_install_${BUILD_ID}_stable_Release && \
+-        tar cvzf /opt/build/vsr-release/ffmpeg_sample_install_${BUILD_ID}_stable_Release.tgz /opt/intel/vsr-package/ffmpeg_sample_install_${BUILD_ID}_stable_Release
+-    fi
+-
+-    if [ $(find ${LIB_INSTALL_DIR} -name ffmpeg_ov_demo | wc -l) -lt 1 ]; then
+-        echo "ffmpeg installation failed"
+-        exit 1
+-    fi
+-    sudo ldconfig
+-}
+-
+-install_apt()
+-{
+-    DRIVE_SOURCE_FOCAL=https://repositories.intel.com/graphics/ubuntu
+-    DRIVE_SOURCE_AGAMA=https://gfx-assets-build.intel.com/artifactory/gfx-debs-per-build
+-    #check focal drive
+-    if [[ $(grep -nr $DRIVE_SOURCE_FOCAL /etc/apt/sources.list.d/ | wc -l) -ge 1 ]]; then
+-        echo "Source conflict. The information is as follows. Please delete the same source and run the script again:"
+-        grep -nr $DRIVE_SOURCE_FOCAL /etc/apt/sources.list.d/
+-        exit 1
+-    fi
+-
+-    #check agama drive
+-    if [[ $(grep -nr $DRIVE_SOURCE_AGAMA /etc/apt/sources.list.d/ | wc -l) -ge 1 ]]; then
+-        echo "Source conflict. The information is as follows. Please delete the same source and run the script again:"
+-        grep -nr $DRIVE_SOURCE_AGAMA /etc/apt/sources.list.d/
+-        exit 1
+-    fi
+-
+-    sudo apt-get update && \
+-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+-        git wget curl gpg-agent curl wget ca-certificates software-properties-common
+-
+-    if [[ $GFX_DRIVER == jammy* ]]; then \
+-        wget -qO - https://repositories.intel.com/graphics/intel-graphics.key | sudo gpg --dearmor --output /usr/share/keyrings/intel-graphics.gpg && \
+-        echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/graphics/ubuntu jammy flex" | \
+-        sudo tee /etc/apt/sources.list.d/intel.gpu.jammy.list; \
+-    fi
+-    if [[ $GFX_DRIVER == focal* ]]; then \
+-        wget -qO - https://repositories.intel.com/graphics/intel-graphics.key | sudo gpg --dearmor --output /usr/share/keyrings/intel-graphics.gpg && \
+-        echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/graphics/ubuntu focal main" | \
+-        sudo tee /etc/apt/sources.list.d/intel.gpu.focal.list; \
+-    fi
+-    if [[ $GFX_DRIVER =~ agama ]]; then \
+-        curl --noproxy '*' -fsSL https://gfx-assets-build.intel.com/artifactory/api/gpg/key/public | sudo apt-key add - && \
+-        echo "deb https://gfx-assets-build.intel.com/artifactory/gfx-debs-per-build untested/main/agama/devel/jammy ${GFX_DRIVER}" | \
+-        sudo tee /etc/apt/sources.list.d/intel.gpu.agama.list; \
+-    fi
+-
+-    sudo apt-get update && \
+-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+-        intel-opencl-icd libvpl2 \
+-        intel-level-zero-gpu level-zero-dev \
+-        intel-media-va-driver-non-free libva-dev
+-}
+-
+-main()
+-{
+-    echo -e "${GREEN}Do you want to install the driver of focal or agama ?${RSTCOL}"
+-    read -p "'y/n' default is n:" IS_INSTALL_DRIVER
+-    IS_INSTALL_DRIVER=${IS_INSTALL_DRIVER:-n}
+-
+-    echo -e "${GREEN}Do you want to install env_init ?${RSTCOL}"
+-    read -p "'y/n' default is y:" IS_INSTALL_ENV_INIT
+-    IS_INSTALL_ENV_INIT=${IS_INSTALL_ENV_INIT:-y}
+-
+-    echo -e "${GREEN}Do you want to install dpcpp ?${RSTCOL}"
+-    read -p "'y/n' default is y:" IS_INSTALL_DPCPP
+-    IS_INSTALL_DPCPP=${IS_INSTALL_DPCPP:-y}
+-
+-    echo -e "${GREEN}Do you want to install meson ?${RSTCOL}"
+-    read -p "'y/n' default is y:" IS_INSTALL_MESON
+-    IS_INSTALL_MESON=${IS_INSTALL_MESON:-y}
+-
+-    echo -e "${GREEN}Do you want to install opencv ?${RSTCOL}"
+-    read -p "'y/n' default is y:" IS_INSTALL_OPENCV
+-    IS_INSTALL_OPENCV=${IS_INSTALL_OPENCV:-y}
+-
+-    echo -e "${GREEN}Do you want to install openvino ?${RSTCOL}"
+-    read -p "'y/n' default is y:" IS_INSTALL_OPENVINO
+-    IS_INSTALL_OPENVINO=${IS_INSTALL_OPENVINO:-y}
+-
+-    echo -e "${GREEN}Do you want to install gstreamer ?${RSTCOL}"
+-    read -p "'y/n' default is y:" IS_INSTALL_GSTREAMER
+-    IS_INSTALL_GSTREAMER=${IS_INSTALL_GSTREAMER:-y}
+-
+-    echo -e "${GREEN}Do you want to install dlstreamer ?${RSTCOL}"
+-    read -p "'y/n' default is y:" IS_INSTALL_DLSTREAMER
+-    IS_INSTALL_DLSTREAMER=${IS_INSTALL_DLSTREAMER:-y}
+-
+-    echo -e "${GREEN}Do you want to install ffmpeg ?${RSTCOL}"
+-    read -p "'y/n' default is y:" IS_INSTALL_FFMPEG
+-    IS_INSTALL_FFMPEG=${IS_INSTALL_FFMPEG:-y}
+-
+-    echo -e "${GREEN}Do you want to install ffmpeg_sample ?${RSTCOL}"
+-    read -p "'y/n' default is y:" IS_INSTALL_FFMPEG_SAMPLE
+-    IS_INSTALL_FFMPEG_SAMPLE=${IS_INSTALL_FFMPEG_SAMPLE:-y}
+-
+-    if [[ ${IS_INSTALL_DRIVER} == "Y" ]] || [[ ${IS_INSTALL_DRIVER} == "y" ]]; then
+-        install_apt
+-    fi
+-
+-    if [[ ${IS_INSTALL_ENV_INIT} == "Y" ]] || [[ ${IS_INSTALL_ENV_INIT} == "y" ]]; then
+-        env_init
+-    fi
+-
+-    if [[ ${IS_INSTALL_DPCPP} == "Y" ]] || [[ ${IS_INSTALL_DPCPP} == "y" ]]; then
+-        build_dpcpp
+-    fi
+-
+-    if [[ ${IS_INSTALL_MESON} == "Y" ]] || [[ ${IS_INSTALL_MESON} == "y" ]]; then
+-        build_meson
+-    fi
+-
+-    if [[ ${IS_INSTALL_OPENCV} == "Y" ]] || [[ ${IS_INSTALL_OPENCV} == "y" ]]; then
+-        build_opencv
+-    fi
+-
+-    if [[ ${IS_INSTALL_OPENVINO} == "Y" ]] || [[ ${IS_INSTALL_OPENVINO} == "y" ]]; then
+-        build_openvino
+-    fi
+-
+-    if [[ ${IS_INSTALL_GSTREAMER} == "Y" ]] || [[ ${IS_INSTALL_GSTREAMER} == "y" ]]; then
+-        build_gstreamer
+-    fi
+-
+-    if [[ ${IS_INSTALL_DLSTREAMER} == "Y" ]] || [[ ${IS_INSTALL_DLSTREAMER} == "y" ]]; then
+-        build_dlstreamer
+-    fi
+-
+-    if [[ ${IS_INSTALL_FFMPEG} == "Y" ]] || [[ ${IS_INSTALL_FFMPEG} == "y" ]]; then
+-        build_ffmpeg
+-    fi
+-
+-    if [[ ${IS_INSTALL_FFMPEG_SAMPLE} == "Y" ]] || [[ ${IS_INSTALL_FFMPEG_SAMPLE} == "y" ]]; then
+-        build_ffmpeg_sample
+-    fi
+-
+-    echo -e "${GREEN}The installation finished.${RSTCOL}"
+-}
+-
+-main
+diff --git a/release-pytorch/docker/ubuntu22.04/main/Dockerfile b/release-pytorch/docker/ubuntu22.04/main/Dockerfile
+deleted file mode 100644
+index efeaca99ec..0000000000
+--- a/release-pytorch/docker/ubuntu22.04/main/Dockerfile
++++ /dev/null
+@@ -1,178 +0,0 @@
+-ARG BASE_IMAGE=ubuntu:22.04
+-ARG PYTHON_VNAME=python3.10
+-
+-FROM ${BASE_IMAGE} as base-dev
+-
+-ENV DEBIAN_FRONTEND=noninteractive
+-
+-RUN apt-get update && \
+-  apt-get install -y --no-install-recommends \
+-    curl wget ca-certificates gpg-agent software-properties-common && \
+-  rm -rf /var/lib/apt/lists/*
+-
+-SHELL ["/bin/bash", "-c"]
+-
+-ARG GFX_DRIVER=jammy
+-
+-RUN echo $GFX_DRIVER && \
+-  if [[ $GFX_DRIVER == jammy* ]]; then \
+-    wget -qO - https://repositories.intel.com/graphics/intel-graphics.key | gpg --dearmor --output /usr/share/keyrings/intel-graphics.gpg && \
+-    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/graphics/ubuntu jammy flex" | \
+-    tee /etc/apt/sources.list.d/intel.gpu.jammy.list; \
+-  fi && \
+-  if [[ $GFX_DRIVER =~ agama ]]; then \
+-    curl --noproxy '*' -fsSL https://gfx-assets-build.intel.com/artifactory/api/gpg/key/public | apt-key add - && \
+-    echo "deb https://gfx-assets-build.intel.com/artifactory/gfx-debs-per-build untested/main/agama/devel/jammy ${GFX_DRIVER}" | \
+-    tee /etc/apt/sources.list.d/intel.gpu.agama.list; \
+-  fi
+-
+-RUN apt-get update && \
+-  apt-get install -y \
+-    intel-opencl-icd \
+-    intel-level-zero-gpu level-zero \
+-    level-zero-dev libigc-dev libigc1 libigdfcl-dev libigdfcl1 libigdgmm-dev:amd64 libigdgmm12:amd64 \
+-    intel-media-va-driver-non-free && \
+-  rm -rf /var/lib/apt/lists/*
+-
+-RUN mkdir /opt/build
+-ENV PATH /opt/conda/bin:$PATH
+-
+-
+-from base-dev as build
+-
+-RUN apt-get update && apt-get install -y --no-install-recommends \
+-    gcc \
+-    g++ \
+-    make \
+-    cmake \
+-    git && \
+-    rm -rf /var/lib/apt/lists/*
+-
+-# install miniconda
+-ARG MINI_CONDA_URL=https://repo.anaconda.com/miniconda/Miniconda3-py310_22.11.1-1-Linux-x86_64.sh
+-RUN cd /opt/build && \
+-  echo ${MINI_CONDA_URL} && \
+-  curl -L -o miniconda.sh -O ${MINI_CONDA_URL} && \
+-  bash miniconda.sh -b -p /opt/conda 
+-
+-# install dpcpp, mkl, tbb
+-ARG ONE_API_PATH=/opt/intel/oneapi
+-ARG ONE_API_SCRIPT_URL=https://registrationcenter-download.intel.com/akdlm/irc_nas/19079/l_BaseKit_p_2023.0.0.25537_offline.sh
+-
+-RUN mkdir -p ${ONE_API_PATH} && \
+-  cd ${ONE_API_PATH} && \
+-  curl -C - --retry 3 -o l_basekit.sh -O ${ONE_API_SCRIPT_URL} && \
+-  bash l_basekit.sh -a -s --eula accept \
+-  --components intel.oneapi.lin.mkl.devel:intel.oneapi.lin.dpcpp-cpp-compiler \
+-  --install-dir ${ONE_API_PATH} && \
+-  rm -f l_basekit.sh
+-
+-ARG ONEAPI_VARS=${ONE_API_PATH}/setvars.sh
+-
+-# check oneapi installed result
+-RUN ls ${ONEAPI_VARS}
+-
+-SHELL ["/bin/bash", "-c"]
+-
+-ARG GIT_ACC=
+-ARG GIT_TOKEN=
+-RUN if [[ ! -z $GIT_ACC && ! -z $GIT_TOKEN ]];then \
+-   echo "machine github.com login ${GIT_ACC} password ${GIT_TOKEN}" > ~/.netrc; \
+-  fi
+-
+-# get codes . 
+-
+-ARG PYTORCH_REPO=https://github.com/pytorch/pytorch.git
+-ARG PYTORCH_COMMIT=v1.13.0
+-ARG IPEX_GPU_REPO=https://github.com/intel/intel-extension-for-pytorch.git
+-ARG IPEX_GPU_COMMIT=v1.13.10+xpu
+-
+-RUN git clone ${PYTORCH_REPO} /opt/build/pytorch && \
+-  cd /opt/build/pytorch && \
+-  git checkout ${PYTORCH_COMMIT}
+-
+-RUN git clone ${IPEX_GPU_REPO} /opt/build/ipex-gpu && \
+-  cd /opt/build/ipex-gpu && \
+-  git checkout ${IPEX_GPU_COMMIT} && \
+-  git submodule update --init --recursive
+-
+-RUN cd /opt/build/pytorch && \
+-  git apply /opt/build/ipex-gpu/torch_patches/*.patch
+-
+-# patch pytorch and install dependence
+-RUN cd /opt/build/pytorch && \
+-  git submodule update --init --recursive && \
+-  python3 -m pip install -r requirements.txt
+-
+-RUN cd /opt/build/pytorch && \
+-  export CMAKE_PREFIX_PATH=/opt/conda/ && \
+-  export GLIBCXX_USE_CXX11_ABI=1 && \
+-  export INTEL_MKL_DIR=${MKLROOT} && \
+-  source ${ONEAPI_VARS} && \
+-  python setup.py bdist_wheel && \
+-  python3 -m pip install dist/*.whl
+-
+-RUN cd ${HOME} && source ${ONEAPI_VARS} && \
+-  python -c "import torch; print(torch.has_mkl)"
+-
+-# build intel IPEX
+-
+-RUN cd /opt/build/ipex-gpu && \
+-  python3 -m pip install -r requirements.txt
+-
+-ARG AOT_DEVLIST
+-RUN cd /opt/build/ipex-gpu && \
+-  source ${ONEAPI_VARS} && \
+-  export USE_AOT_DEVLIST=${AOT_DEVLIST} && \
+-  env && \
+-  BUILD_INT8_JIT_SAVE=ON python setup.py bdist_wheel && \
+-  python3 -m pip install --force-reinstall dist/*.whl
+-
+-RUN cd ${HOME} && source ${ONEAPI_VARS} && \
+-  python -c "import torch, intel_extension_for_pytorch;"
+-
+-
+-# final image 
+-from base-dev 
+-LABEL vendor="Intel Corporation"
+-
+-COPY --from=build /opt/conda /opt/conda
+-COPY --from=build /opt/intel /opt/intel
+-
+-
+-RUN mkdir /opt/release
+-COPY --from=build /opt/build/pytorch/dist/*.whl /opt/release/
+-COPY --from=build /opt/build/ipex-gpu/dist/*.whl /opt/release/
+-
+-
+-# Custom component installation rules, if any...
+-
+-RUN apt-get update && \
+-  apt-get install -y --no-install-recommends \
+-    libgl1-mesa-glx \
+-    vim \
+-    libva2 \
+-    libva-drm2 \
+-    libva-x11-2 \
+-    libva-wayland2 \
+-    libx264-163 \
+-    libx265-199 && \
+-  rm -rf /var/lib/apt/lists/* && \
+-  pip3 install Cython
+-
+-# clean
+-RUN rm -rf /opt/build
+-
+-# set env
+-RUN echo "/opt/intel//lib" > /etc/ld.so.conf.d/intel--pytorch-libs.conf && \
+-  echo "/opt/conda/lib" >> /etc/ld.so.conf.d/intel--pytorch-libs.conf && \
+-  echo "/opt/conda/lib/python3.10/site-packages/intel_extension_for_pytorch/lib" >> /etc/ld.so.conf.d/intel--pytorch-libs.conf && \
+-  echo "/opt/conda/lib/python3.10/site-packages/torch/lib" >> /etc/ld.so.conf.d/intel--pytorch-libs.conf && \
+-  ldconfig
+-
+-RUN echo "source /opt/intel/oneapi/setvars.sh" >> $HOME/.bashrc
+-ENV IPEX_XPU_ONEDNN_LAYOUT=1
+-ENV PATH=/opt/intel//bin:$PATH
+-ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libstdc++.so.6
+-
+-WORKDIR  /opt
+diff --git a/release-pytorch/readme.md b/release-pytorch/readme.md
+deleted file mode 100644
+index 3117202257..0000000000
+--- a/release-pytorch/readme.md
++++ /dev/null
+@@ -1,6 +0,0 @@
+-```bash
+-# Build and run ipex docker
+-cd <PATH_TO_THIS_PROJECT>/script
+-bash build-pytorch-docker-ubuntu.sh
+-docker run -it --name <name> --device=/dev/dri/renderD128 --cap-add SYS_ADMIN -v /dev/dri/by-path:/dev/dri/by-path -v /sys:/sys -v /home/:/home --ipc=host <imagename:tag> /bin/bash
+-```
+\ No newline at end of file
+diff --git a/release-pytorch/script/ubuntu/build.sh b/release-pytorch/script/ubuntu/build.sh
+deleted file mode 100755
+index 015e4a6318..0000000000
+--- a/release-pytorch/script/ubuntu/build.sh
++++ /dev/null
+@@ -1,395 +0,0 @@
+-# SPDX-License-Identifier: BSD 3-Clause License
+-#
+-# Copyright (c) 2022, Intel Corporation
+-# All rights reserved.
+-#
+-# Redistribution and use in source and binary forms, with or without
+-# modification, are permitted provided that the following conditions are met:
+-#
+-# * Redistributions of source code must retain the above copyright notice, this
+-#   list of conditions and the following disclaimer.
+-#
+-# * Redistributions in binary form must reproduce the above copyright notice,
+-#   this list of conditions and the following disclaimer in the documentation
+-#   and/or other materials provided with the distribution.
+-#
+-# * Neither the name of the copyright holder nor the names of its
+-#   contributors may be used to endorse or promote products derived from
+-#   this software without specific prior written permission.
+-#
+-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+-# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+-# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+-# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+-# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+-# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+-# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+-# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+-# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+-# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+-
+-#!/bin/bash
+-set -e
+-
+-# this support ubuntu22.04 only
+-
+-PYTORCH_REPO=https://github.com/pytorch/pytorch.git
+-PYTORCH_COMMIT=v1.13.0
+-IPEX_GPU_REPO=https://github.com/intel/intel-extension-for-pytorch.git
+-IPEX_GPU_COMMIT=v1.13.10+xpu
+-OPENCV_REPO=https://github.com/opencv/opencv/archive/4.5.3.tar.gz
+-
+-BASEPATH=$(cd `dirname $0`; pwd)
+-WORKLOADS_PATH="$BASEPATH/../../../workloads"
+-LIB_INSTALL_DIR=/opt/intel/mass
+-BUILD_DIR=${BASEPATH}/build
+-GFX_DRIVER=jammy
+-MINI_CONDA_URL=https://repo.anaconda.com/miniconda/Miniconda3-py310_22.11.1-1-Linux-x86_64.sh
+-AOT_DEVLIST=ats-m150
+-ONE_API_SCRIPT_URL=https://registrationcenter-download.intel.com/akdlm/irc_nas/19079/l_BaseKit_p_2023.0.0.25537_offline.sh
+-
+-RSTCOL='\e[0m'
+-GREEN='\e[0;32m'
+-
+-export PATH=/opt/conda/bin:$PATH
+-ONE_API_PATH=/opt/intel/oneapi
+-ONEAPI_VARS=${ONE_API_PATH}/setvars.sh
+-export PKG_CONFIG_PATH=$LIB_INSTALL_DIR/lib/pkgconfig
+-
+-install_apt()
+-{
+-    DRIVE_SOURCE_FOCAL=https://repositories.intel.com/graphics/ubuntu
+-    DRIVE_SOURCE_AGAMA=https://gfx-assets-build.intel.com/artifactory/gfx-debs-per-build
+-
+-    #check focal drive
+-    if [[ $(grep -nr $DRIVE_SOURCE_FOCAL /etc/apt/sources.list.d/ | wc -l) -ge 1 ]]; then
+-        echo "Source conflict. The information is as follows. Please delete the same source and run the script again:"
+-        grep -nr $DRIVE_SOURCE_FOCAL /etc/apt/sources.list.d/
+-        exit 1
+-    fi
+-
+-    #check agama drive
+-    if [[ $(grep -nr $DRIVE_SOURCE_AGAMA /etc/apt/sources.list.d/ | wc -l) -ge 1 ]]; then
+-        echo "Source conflict. The information is as follows. Please delete the same source and run the script again:"
+-        grep -nr $DRIVE_SOURCE_AGAMA /etc/apt/sources.list.d/
+-        exit 1
+-    fi
+-
+-    sudo apt-get update && \
+-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+-        git wget curl gpg-agent curl wget ca-certificates software-properties-common
+-
+-    if [[ $GFX_DRIVER == jammy* ]]; then \
+-        wget -qO - https://repositories.intel.com/graphics/intel-graphics.key | sudo gpg --dearmor --output /usr/share/keyrings/intel-graphics.gpg && \
+-        echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/graphics/ubuntu jammy flex" | \
+-        sudo tee /etc/apt/sources.list.d/intel.gpu.jammy.list; \
+-    fi
+-    if [[ $GFX_DRIVER == focal* ]]; then \
+-        wget -qO - https://repositories.intel.com/graphics/intel-graphics.key | sudo gpg --dearmor --output /usr/share/keyrings/intel-graphics.gpg && \
+-        echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/graphics/ubuntu focal main" | \
+-        sudo tee /etc/apt/sources.list.d/intel.gpu.focal.list; \
+-    fi
+-    if [[ $GFX_DRIVER =~ agama ]]; then \
+-        curl --noproxy '*' -fsSL https://gfx-assets-build.intel.com/artifactory/api/gpg/key/public | sudo apt-key add - && \
+-        echo "deb https://gfx-assets-build.intel.com/artifactory/gfx-debs-per-build untested/main/agama/devel/jammy ${GFX_DRIVER}" | \
+-        sudo tee /etc/apt/sources.list.d/intel.gpu.agama.list; \
+-    fi
+-
+-    sudo apt-get update && \
+-    sudo apt-get install -y \
+-        intel-opencl-icd intel-level-zero-gpu level-zero \
+-        level-zero-dev libigc-dev libigc1 libigdfcl-dev \
+-        libigdfcl1 libigdgmm-dev:amd64 libigdgmm12:amd64 \
+-        intel-media-va-driver-non-free libva-dev
+-}
+-
+-env_init()
+-{
+-    ###Create related working directory###
+-    mkdir -p $BUILD_DIR
+-    if [ ! -d $LIB_INSTALL_DIR ]; then
+-        sudo mkdir -p $LIB_INSTALL_DIR
+-        sudo chown -R $USER $LIB_INSTALL_DIR
+-    elif [ ! -w $LIB_INSTALL_DIR ]; then
+-        echo "Error, the current user does not have $LIB_INSTALL_DIR Access"
+-        exit 1
+-    fi
+-
+-    sudo apt --fix-broken install -y && \
+-    sudo apt-get update && \
+-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+-        curl ca-certificates git cmake gcc g++ make meson patch ninja-build nasm wget \
+-        libx264-dev libx265-dev pkg-config yasm
+-}
+-
+-
+-build_miniconda()
+-{
+-    sudo rm -rf /opt/conda
+-    rm -rf $BUILD_DIR/miniconda.sh
+-    cd $BUILD_DIR && \
+-        curl -fsSL -o miniconda.sh -O ${MINI_CONDA_URL} && \
+-        sudo bash miniconda.sh -b -p /opt/conda
+-}
+-
+-build_oneapi()
+-{
+-    # install dpcpp, mkl, tbb
+-    sudo mkdir -p ${ONE_API_PATH}
+-
+-    cd ${BUILD_DIR} && \
+-    curl -C - --retry 3 -o l_basekit.sh -O ${ONE_API_SCRIPT_URL} && \
+-    sudo bash l_basekit.sh -a -s --eula accept \
+-    --components intel.oneapi.lin.mkl.devel:intel.oneapi.lin.dpcpp-cpp-compiler \
+-    --install-dir ${ONE_API_PATH} && \
+-    rm -f l_basekit.sh
+-}
+-
+-build_pytorch()
+-{
+-    rm -rf $BUILD_DIR/pytorch
+-    rm -rf $BUILD_DIR/pytorch-patch
+-    git clone ${PYTORCH_REPO} $BUILD_DIR/pytorch && \
+-        cd $BUILD_DIR/pytorch && \
+-            git checkout ${PYTORCH_COMMIT}
+-
+-    git clone ${IPEX_GPU_REPO} $BUILD_DIR/pytorch-patch && \
+-    cd $BUILD_DIR/pytorch-patch && \
+-    git checkout ${IPEX_GPU_COMMIT}
+-
+-    # patch pytorch and install dependence
+-    cd $BUILD_DIR/pytorch && \
+-        git apply $BUILD_DIR/pytorch-patch/torch_patches/*.patch && \
+-        git submodule update --init --recursive && \
+-        python3 -m pip install -r requirements.txt && \
+-        export CMAKE_PREFIX_PATH=/opt/conda/ && \
+-        source ${ONEAPI_VARS} --force && \
+-        INTEL_MKL_DIR=${MKLROOT} python3 setup.py bdist_wheel && \
+-        python3 -m pip install --force-reinstall dist/*.whl
+-
+-    cd ${HOME} && source ${ONEAPI_VARS} --force && \
+-        python3 -c "import torch; print(torch.has_mkl)"
+-}
+-
+-build_ipex_gpu()
+-{
+-    # build ipex-gpu
+-    rm -rf $BUILD_DIR/ipex-gpu
+-    git clone ${IPEX_GPU_REPO} $BUILD_DIR/ipex-gpu && \
+-        cd $BUILD_DIR/ipex-gpu && \
+-        git checkout ${IPEX_GPU_COMMIT} && \
+-        git submodule update --init --recursive && \
+-        python3 -m pip install -r requirements.txt && \
+-        source ${ONEAPI_VARS} --force && \
+-        export USE_AOT_DEVLIST=${AOT_DEVLIST} && \
+-        env && \
+-        python3 setup.py bdist_wheel && \
+-        python3 -m pip install --force-reinstall dist/*.whl
+-
+-    cd ${HOME} && source ${ONEAPI_VARS} --force && \
+-        python3 -c "import torch, intel_extension_for_pytorch;"
+-}
+-
+-build_ffmpeg()
+-{
+-    export PKG_CONFIG_PATH=$LIB_INSTALL_DIR/lib/pkgconfig
+-    export CMAKE_PREFIX_PATH=$LIB_INSTALL_DIR/lib/cmake
+-    sudo apt-get update && \
+-    sudo apt-get install -y --no-install-recommends libdrm-dev 
+-    rm -rf $BUILD_DIR/media-delivery
+-    pip3 install Cython
+-    # get patch from media-delivery
+-    git clone https://github.com/intel/media-delivery.git $BUILD_DIR/media-delivery && \
+-    cd $BUILD_DIR/media-delivery && \
+-    git checkout d8b28d0bd63630094b64bc3756f98dd88231830f
+-
+-    rm -rf $BUILD_DIR/opencv-4.5.3
+-
+-    cd $BUILD_DIR && \
+-        wget -O - ${OPENCV_REPO} | tar xz
+-
+-    cd $BUILD_DIR/opencv-4.5.3 && mkdir build && cd build && \
+-    cmake \
+-        -DCMAKE_BUILD_TYPE=Release \
+-        -DCMAKE_INSTALL_PREFIX=$LIB_INSTALL_DIR \
+-        -DCMAKE_INSTALL_LIBDIR=lib \
+-        -DOPENCV_GENERATE_PKGCONFIG=ON \
+-        -DBUILD_DOCS=OFF \
+-        -DBUILD_EXAMPLES=OFF \
+-        -DBUILD_PERF_TESTS=OFF \
+-        -DBUILD_TESTS=OFF \
+-        -DWITH_OPENEXR=OFF \
+-        -DWITH_OPENJPEG=OFF \
+-        -DWITH_GSTREAMER=OFF \
+-        -DWITH_JASPER=OFF \
+-        .. && \
+-    make -j "$(nproc)" && \
+-    make install
+-
+-    rm -rf $BUILD_DIR/vmaf
+-    git clone --depth 1 --branch v2.2.1 https://github.com/Netflix/vmaf.git $BUILD_DIR/vmaf && \
+-    cp $BUILD_DIR/media-delivery/patches/vmaf/*.patch $BUILD_DIR/vmaf/ && \
+-    cd $BUILD_DIR/vmaf && { set -e; \
+-    for patch_file in $(find -iname "*.patch" | sort -n); do \
+-        echo "Applying: ${patch_file}"; \
+-        patch -p1 < ${patch_file}; \
+-    done; }
+-
+-    cd $BUILD_DIR/vmaf/libvmaf && \
+-    meson build \
+-        --prefix=$LIB_INSTALL_DIR \
+-        --libdir=$LIB_INSTALL_DIR/lib \
+-        --buildtype=release && \
+-    ninja -j $(nproc --all) -C build && \
+-    ninja -C build install
+-
+-    # final
+-    rm -rf $BUILD_DIR/ffmpeg
+-    git clone https://github.com/ffmpeg/ffmpeg $BUILD_DIR/ffmpeg && \
+-    cd $BUILD_DIR/ffmpeg && \
+-    git checkout f6a36c7
+-
+-    cp $BUILD_DIR/media-delivery/patches/ffmpeg/*.patch $BUILD_DIR/ffmpeg/ && \
+-    cd $BUILD_DIR/ffmpeg && { set -e; \
+-    for patch_file in $(find -iname "*.patch" | sort -n); do \
+-        echo "Applying: ${patch_file}"; \
+-        patch -p1 < ${patch_file}; \
+-    done; }
+-
+-    cd $BUILD_DIR/ffmpeg && \
+-        ./configure \
+-        --prefix=$LIB_INSTALL_DIR \
+-        --libdir=$LIB_INSTALL_DIR/lib \
+-        --disable-static \
+-        --disable-doc \
+-        --enable-shared \
+-        --enable-vaapi \
+-        --disable-libvpl \
+-        --enable-gpl \
+-        --enable-libx264 \
+-        --enable-libx265 \
+-        --enable-version3 \
+-        --enable-libvmaf \
+-        --disable-libdav1d && \
+-    make -j $(nproc --all) && \
+-    make install
+-}
+-
+-build_ffmpeg_sample()
+-{
+-    export PKG_CONFIG_PATH=$LIB_INSTALL_DIR/lib/pkgconfig
+-    export CMAKE_PREFIX_PATH=$LIB_INSTALL_DIR/lib/cmake
+-
+-    rm -rf $BUILD_DIR/mapipe
+-    cp -r $WORKLOADS_PATH/mapipe $BUILD_DIR/mapipe
+-    BUILD_TYPE=Release
+-    DPCPP_ROOT=${ONE_API_PATH}/compiler/2022.1.0
+-    TBB_ROOT=/opt/intel/oneapi/tbb/2021.6.0
+-    PYTHON_PACKAGE_ROOT=/home/${USER}/.local/lib/python3.10/site-packages
+-    cd $BUILD_DIR/mapipe && \
+-    source ${ONEAPI_VARS} --force && \
+-    export MKL_DIR=${MKLROOT}/lib/cmake/mkl && \
+-    export IntelDPCPP_DIR=${DPCPP_ROOT}/linux/IntelDPCPP && \
+-    export Torch_DIR=${PYTHON_PACKAGE_ROOT}/torch/share/cmake/Torch && \
+-    export OpenCV_DIR=$LIB_INSTALL_DIR/lib/cmake/opencv4 && \
+-    export IntelExtensionPytorch_DIR=${PYTHON_PACKAGE_ROOT}/intel_extension_for_pytorch/share/cmake/IntelExtensionPytorch && \
+-    export TBB_DIR=${TBB_ROOT}/lib/cmake/tbb && \
+-    mkdir build && cd build && \
+-    cmake \
+-        -DCMAKE_INSTALL_PREFIX=$LIB_INSTALL_DIR/ \
+-        -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+-        .. && \
+-    make && \
+-    make install
+-}
+-
+-finish_build()
+-{
+-    echo 'source /opt/intel/oneapi/setvars.sh --force' > /opt/intel/mass/mass-setvars.sh
+-    echo 'export PATH=/opt/conda/bin:/opt/intel/mass/bin:$PATH' >> /opt/intel/mass/mass-setvars.sh
+-    echo 'export IPEX_XPU_ONEDNN_LAYOUT=1' >> /opt/intel/mass/mass-setvars.sh
+-    if [[ -e /usr/lib/x86_64-linux-gnu/libstdc++.so.6 ]]; then
+-        echo "export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libstdc++.so.6" >> /opt/intel/mass/mass-setvars.sh
+-    fi
+-
+-    # final build
+-    # set env
+-    sudo sh -c "echo $LIB_INSTALL_DIR/lib > /etc/ld.so.conf.d/intel-mass-pytorch-libs.conf"
+-    sudo sh -c "echo /opt/conda/lib >> /etc/ld.so.conf.d/intel-mass-pytorch-libs.conf"
+-    sudo sh -c "echo /home/${USER}/.local/lib/python3.10/site-packages/intel_extension_for_pytorch/lib >> /etc/ld.so.conf.d/intel-mass-pytorch-libs.conf"
+-    sudo sh -c "echo /home/${USER}/.local/lib/python3.10/site-packages/torch/lib >> /etc/ld.so.conf.d/intel-mass-pytorch-libs.conf"
+-    sudo ldconfig
+-
+-    echo -e "${GREEN}The installation finished.${RSTCOL}"
+-}
+-
+-main()
+-{
+-    echo -e "${GREEN}Do you want to install the driver of focal or agama ?${RSTCOL}"
+-    read -p "'y/n' default is y:" IS_INSTALL_DRIVER
+-    IS_INSTALL_DRIVER=${IS_INSTALL_DRIVER:-y}
+-
+-    echo -e "${GREEN}Do you want to install env_init ?${RSTCOL}"
+-    read -p "'y/n' default is y:" IS_INSTALL_ENV_INIT
+-    IS_INSTALL_ENV_INIT=${IS_INSTALL_ENV_INIT:-y}
+-
+-    echo -e "${GREEN}Do you want to install miniconda ?${RSTCOL}"
+-    read -p "'y/n' default is y:" IS_INSTALL_MINICONDA
+-    IS_INSTALL_MINICONDA=${IS_INSTALL_MINICONDA:-y}
+-
+-    echo -e "${GREEN}Do you want to install oneapi ?${RSTCOL}"
+-    read -p "'y/n' default is y:" IS_INSTALL_ONEAPI
+-    IS_INSTALL_ONEAPI=${IS_INSTALL_ONEAPI:-y}
+-
+-    echo -e "${GREEN}Do you want to install pytorch ?${RSTCOL}"
+-    read -p "'y/n' default is y:" IS_INSTALL_PYTORCH
+-    IS_INSTALL_PYTORCH=${IS_INSTALL_PYTORCH:-y}
+-
+-    echo -e "${GREEN}Do you want to install ipex_gpu ?${RSTCOL}"
+-    read -p "'y/n' default is y:" IS_INSTALL_IPEX_GPU
+-    IS_INSTALL_IPEX_GPU=${IS_INSTALL_IPEX_GPU:-y}
+-
+-    echo -e "${GREEN}Do you want to install ffmpeg ?${RSTCOL}"
+-    read -p "'y/n' default is n:" IS_INSTALL_FFMPEG
+-    IS_INSTALL_FFMPEG=${IS_INSTALL_FFMPEG:-n}
+-
+-    echo -e "${GREEN}Do you want to install ffmpeg_sample ?${RSTCOL}"
+-    read -p "'y/n' default is n:" IS_INSTALL_FFMPEG_SAMPLE
+-    IS_INSTALL_FFMPEG_SAMPLE=${IS_INSTALL_FFMPEG_SAMPLE:-n}
+-
+-    if [[ ${IS_INSTALL_DRIVER} == "Y" ]] || [[ ${IS_INSTALL_DRIVER} == "y" ]]; then
+-        install_apt
+-    fi
+-
+-    if [[ ${IS_INSTALL_ENV_INIT} == "Y" ]] || [[ ${IS_INSTALL_ENV_INIT} == "y" ]]; then
+-        env_init
+-    fi
+-
+-    if [[ ${IS_INSTALL_MINICONDA} == "Y" ]] || [[ ${IS_INSTALL_MINICONDA} == "y" ]]; then
+-        build_miniconda
+-    fi
+-
+-    if [[ ${IS_INSTALL_ONEAPI} == "Y" ]] || [[ ${IS_INSTALL_ONEAPI} == "y" ]]; then
+-        build_oneapi
+-    fi
+-
+-    if [[ ${IS_INSTALL_PYTORCH} == "Y" ]] || [[ ${IS_INSTALL_PYTORCH} == "y" ]]; then
+-        build_pytorch
+-    fi
+-
+-    if [[ ${IS_INSTALL_IPEX_GPU} == "Y" ]] || [[ ${IS_INSTALL_IPEX_GPU} == "y" ]]; then
+-        build_ipex_gpu
+-    fi
+-
+-    if [[ ${IS_INSTALL_FFMPEG} == "Y" ]] || [[ ${IS_INSTALL_FFMPEG} == "y" ]]; then
+-        build_ffmpeg
+-    fi
+-
+-    if [[ ${IS_INSTALL_FFMPEG_SAMPLE} == "Y" ]] || [[ ${IS_INSTALL_FFMPEG_SAMPLE} == "y" ]]; then
+-        build_ffmpeg_sample
+-    fi
+-
+-    finish_build
+-}
+-
+-main
+diff --git a/release-pytorch/tools/.gitignore b/release-pytorch/tools/.gitignore
+deleted file mode 100644
+index 771ae14431..0000000000
+--- a/release-pytorch/tools/.gitignore
++++ /dev/null
+@@ -1,4 +0,0 @@
+-*/_pytorch_model
+-*/*.tar.gz
+-*/*.pth
+-*/*.pt
+diff --git a/release-pytorch/tools/resnet50-convert/README.md b/release-pytorch/tools/resnet50-convert/README.md
+deleted file mode 100644
+index ab957d61cf..0000000000
+--- a/release-pytorch/tools/resnet50-convert/README.md
++++ /dev/null
+@@ -1,9 +0,0 @@
+-
+-# How to save Resnet50 Torch Scirpt model which can be loaded by C++ demo application
+-
+-* Download `pytorch-gpu-resnet50v1-5-inference.tar.gz` from https://registrationcenter.intel.com/en/products/subscription/956/ to current folder.
+-* launch `convert.sh` in the ubuntu environment where PyTorch and IPEX-GPU is installed.
+-* then, a jit model is generated here, its name maybe as `rn50_jit_model_fp32.pt`
+-
+-
+-
+diff --git a/release-pytorch/tools/resnet50-convert/convert.sh b/release-pytorch/tools/resnet50-convert/convert.sh
+deleted file mode 100755
+index b29a41585f..0000000000
+--- a/release-pytorch/tools/resnet50-convert/convert.sh
++++ /dev/null
+@@ -1,34 +0,0 @@
+-#!/bin/bash
+-
+-BASEPATH=$(cd `dirname $0`; pwd)
+-set -ex
+-
+-MODEL_PACKAGE=pytorch-gpu-resnet50v1-5-inference.tar.gz
+-
+-if [[ ! -e $MODEL_PACKAGE ]]; then
+-    echo "file $MODEL_PACKAGE is not exist"
+-fi
+-
+-pip install pillow
+-pip install torchvision==0.8.2 --no-deps
+-
+-TARGET_FOLDER=_pytorch_model
+-mkdir -p $TARGET_FOLDER
+-rm -rf $TARGET_FOLDER/*
+-tar xvfz $MODEL_PACKAGE --strip-components 1 -C $TARGET_FOLDER
+-
+-cd $TARGET_FOLDER/model_packages
+-tar xvfz pytorch-gpu-resnet50v1-5-inference.tar.gz
+-
+-cd pytorch-gpu-resnet50v1-5-inference/models
+-
+-
+-MOBEL_SH=image_recognition/pytorch/resnet50v1_5/inference/gpu/main.py
+-
+-export IPEX_XPU_ONEDNN_LAYOUT=1
+-
+-python $MOBEL_SH -a resnet50 -e -b 512 --pretrained --jit --jit-cache $BASEPATH --xpu 0 --dummy $BASEPATH
+-
+-cd $BASEPATH
+-rm -rf _pytorch_model
+-
+diff --git a/release-pytorch/tools/yolov4-convert/README.md b/release-pytorch/tools/yolov4-convert/README.md
+deleted file mode 100644
+index 3a3961fa40..0000000000
+--- a/release-pytorch/tools/yolov4-convert/README.md
++++ /dev/null
+@@ -1,10 +0,0 @@
+-
+-# How to save YOLOv4 Torch Scirpt model which can be loaded by C++ demo application
+-
+-* Download `pytorch-gpu-yolov4-inference.tar.gz` from https://registrationcenter.intel.com/en/products/subscription/956/ to current folder.
+-* Download ined weights from: yolov4.pth(https://pan.baidu.com/s/1ZroDvoGScDgtE1ja_QqJVw Extraction code:xrq9) or yolov4.pth(https://drive.google.com/open?id=1wv_LiFeCRYwtpkqREPeI13-gPELBDwuJ) to current folder.
+-* launch `convert.sh` in the ubuntu environment where PyTorch and IPEX-GPU is installed.
+-* then, a jit model is generated here, its name maybe as `yolov4_jit_model_FP32_416x416_no_yolo_layer.pt`.
+-
+-
+-
+diff --git a/release-pytorch/tools/yolov4-convert/convert.sh b/release-pytorch/tools/yolov4-convert/convert.sh
+deleted file mode 100755
+index 6b5fb9e3c3..0000000000
+--- a/release-pytorch/tools/yolov4-convert/convert.sh
++++ /dev/null
+@@ -1,43 +0,0 @@
+-#!/bin/bash
+-
+-BASEPATH=$(cd `dirname $0`; pwd)
+-set -ex
+-
+-MODEL_PACKAGE=pytorch-gpu-yolov4-inference.tar.gz
+-MODEL_PTH=yolov4.pth
+-
+-if [[ ! -e $MODEL_PACKAGE ]]; then
+-    echo "file $MODEL_PACKAGE is not exist"
+-fi
+-
+-if [[ ! -e $MODEL_PTH ]];then
+-    echo "file $MODEL_PTH is not exist"
+-fi
+-
+-PER=
+-if [[ `id | grep 'gid=0' | wc -l` -eq 0 ]];then
+-    PER="sudo"
+-fi
+-$PER apt-get install libglib2.0-0
+-pip install opencv-python
+-
+-TARGET_FOLDER=_pytorch_model
+-mkdir -p $TARGET_FOLDER
+-rm -rf $TARGET_FOLDER/*
+-tar xvfz $MODEL_PACKAGE --strip-components 1 -C $TARGET_FOLDER
+-
+-cd $TARGET_FOLDER/model_packages
+-tar xvfz pytorch-gpu-yolov4-inference.tar.gz
+-cd pytorch-gpu-yolov4-inference/models
+-cp $BASEPATH/yolov4_save_model.patch ./
+-git apply yolov4_save_model.patch
+-
+-cd ..
+-cp $BASEPATH/save_model.sh ./
+-
+-export PRETRAINED_MODEL=$BASEPATH/$MODEL_PTH
+-bash -x save_model.sh
+-mv *.pt $BASEPATH/
+-
+-cd $BASEPATH
+-rm -rf _pytorch_model
+diff --git a/release-pytorch/tools/yolov4-convert/save_model.sh b/release-pytorch/tools/yolov4-convert/save_model.sh
+deleted file mode 100755
+index c5a1072f03..0000000000
+--- a/release-pytorch/tools/yolov4-convert/save_model.sh
++++ /dev/null
+@@ -1,49 +0,0 @@
+-#!/usr/bin/env bash
+-#
+-# Copyright (c) 2022 Intel Corporation
+-#
+-# Licensed under the Apache License, Version 2.0 (the "License");
+-# you may not use this file except in compliance with the License.
+-# You may obtain a copy of the License at
+-#
+-#    http://www.apache.org/licenses/LICENSE-2.0
+-#
+-# Unless required by applicable law or agreed to in writing, software
+-# distributed under the License is distributed on an "AS IS" BASIS,
+-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-# See the License for the specific language governing permissions and
+-# limitations under the License.
+-#
+-
+-SOURCE_DIR=$(dirname "$(readlink -f "$0")")
+-MODEL_DIR=${SOURCE_DIR}
+-
+-# check pretrained model
+-if [[ -z "${PRETRAINED_MODEL}" ]]; then
+-  echo "The required environment variable PRETRAINED_MODEL has not been set."
+-  echo "Please specify the downloaded model weights file."
+-  exit 1
+-fi
+-
+-# setup env
+-#source /opt/intel/oneapi/setupvars.sh
+-
+-# run test
+-export IPEX_XPU_ONEDNN_LAYOUT=1
+-
+-MODEL_FILE="${MODEL_DIR}/models/object_detection/pytorch/yolov4/inference/gpu/models.py"
+-MODEL_INPUT_WIDTH=416
+-MODEL_INPUT_HEIGHT=416
+-MODEL_PRECISION="FP32"
+-TEST_DATA="${MODEL_DIR}/models/object_detection/pytorch/yolov4/inference/gpu/data/000000581918.jpg"
+-DATASET_CLASSES=80
+-DATASET_LABELS="${MODEL_DIR}/models/object_detection/pytorch/yolov4/inference/gpu/data/coco.names"
+-TEST_WITH_DUMMY_DATA=0
+-TEST_BATCH_SIZE=1
+-TEST_BENCHMARK=1
+-SAVE_MODEL=1
+-
+-python -u ${MODEL_FILE} ${DATASET_CLASSES} ${PRETRAINED_MODEL} ${TEST_DATA} \
+-    ${MODEL_INPUT_HEIGHT} ${MODEL_INPUT_WIDTH} ${DATASET_LABELS} ${MODEL_PRECISION} \
+-    ${TEST_WITH_DUMMY_DATA} ${TEST_BATCH_SIZE} ${TEST_BENCHMARK} ${SAVE_MODEL} \
+-    2>&1 | tee logs.txt
+diff --git a/release-pytorch/tools/yolov4-convert/yolov4_save_model.patch b/release-pytorch/tools/yolov4-convert/yolov4_save_model.patch
+deleted file mode 100644
+index 904b113c38..0000000000
+--- a/release-pytorch/tools/yolov4-convert/yolov4_save_model.patch
++++ /dev/null
+@@ -1,60 +0,0 @@
+---- models/object_detection/pytorch/yolov4/inference/gpu/models_origin.py	2022-09-28 10:42:05.159227220 +0800
+-+++ models/object_detection/pytorch/yolov4/inference/gpu/models.py	2022-09-28 13:36:10.371103057 +0800
+-@@ -478,6 +478,7 @@
+-     dummy = 0
+-     batch_size = 1
+-     benchmark = 0
+-+    save_model = 0
+-     if len(sys.argv) == 6:
+-         n_classes = int(sys.argv[1])
+-         weightfile = sys.argv[2]
+-@@ -520,6 +521,18 @@
+-         dummy = int(sys.argv[7])
+-         batch_size = int(sys.argv[8])
+-         benchmark = int(sys.argv[9])
+-+    elif len(sys.argv) == 12:
+-+        n_classes = int(sys.argv[1])
+-+        weightfile = sys.argv[2]
+-+        imgfile = sys.argv[3]
+-+        height = int(sys.argv[4])
+-+        width = int(sys.argv[5])
+-+        namesfile = str(sys.argv[6])
+-+        data_type = str(sys.argv[7])
+-+        dummy = int(sys.argv[8])
+-+        batch_size = int(sys.argv[9])
+-+        benchmark = int(sys.argv[10])
+-+        save_model = int(sys.argv[11])
+-     else:
+-         print('Usage: ')
+-         print('  python models.py num_classes weightfile imgfile namefile')
+-@@ -571,6 +584,16 @@
+-         modelJit = torch.jit.trace(model, img_jit)
+-     model = wrap_cpp_module(torch._C._jit_pass_fold_convbn(modelJit._c))
+- 
+-+    model_name = None
+-+    if save_model == 1:
+-+        model_name = "yolov4_jit_model_{}_{}x{}_{}.pt".format(data_type, height, width, "no_yolo_layer" if benchmark else "yolo_layer")
+-+        if data_type != 'int8':
+-+            print("saving model to {} ...".format(model_name))
+-+            model_scripted = torch.jit.script(model)
+-+            torch.jit.save(model_scripted, model_name)
+-+            print("model saved")
+-+            exit(0)
+-+
+-     if data_type == 'int8':
+-         ##Do calibration for INT8
+-         print("Calibration for INT8 ... ")
+-@@ -592,6 +615,13 @@
+- 
+-             model = convert_jit(model, True)
+-             # print(model.graph_for(img_jit))
+-+            if save_model == 1:
+-+                print("saving model to {} ...".format(model_name))
+-+                model_scripted = torch.jit.script(model)
+-+                torch.jit.save(model_scripted, model_name)
+-+                print("model saved")
+-+                exit(0)
+-+
+-     from tool.utils import load_class_names, plot_boxes_cv2
+-     from tool.torch_utils import do_detect
+-     for i in range(2):  # This 'for' loop is for speed check
+diff --git a/scripts/.gitignore b/scripts/.gitignore
+deleted file mode 100644
+index 4359a4de29..0000000000
+--- a/scripts/.gitignore
++++ /dev/null
+@@ -1,3 +0,0 @@
+-tmp/
+-*.txt
+-t_*
+diff --git a/scripts/bkc_script_update.sh b/scripts/bkc_script_update.sh
+deleted file mode 100755
+index e3ef299878..0000000000
+--- a/scripts/bkc_script_update.sh
++++ /dev/null
+@@ -1,18 +0,0 @@
+-#!/bin/bash -e
+-# update bkc install script and let it works in docker build
+-# parameters:
+-# 1 - bck folder name
+-# 2 - os : ubuntu centos
+-
+-set -e
+-
+-BASEPATH=$(cd `dirname $0`; pwd)
+-
+-BKC_FOLDER=$1
+-
+-cd $BASEPATH/../bkc/$BKC_FOLDER
+-
+-cp install-sg2.sh _install.sh
+-sed -i 's/^main$/\$1/' ./_install.sh
+-
+-echo "update bkc $BKC_FOLDER done"
+diff --git a/scripts/build-openvino-docker-ubuntu.sh b/scripts/build-openvino-docker-ubuntu.sh
+deleted file mode 100755
+index 5ef9b86958..0000000000
+--- a/scripts/build-openvino-docker-ubuntu.sh
++++ /dev/null
+@@ -1,141 +0,0 @@
+-#!/bin/bash
+-# launch as:
+-# ./build-openvino-docker-ubuntu.sh -driver_source agama-ci-prerelease-505
+-# ./build-openvino-docker-ubuntu.sh -driver_source agama-ci-prerelease-505 -install_pipeline_zoo
+-# ./build-openvino-docker-ubuntu.sh -install_pipeline_zoo -install_dpcpp
+-#
+-
+-set -e
+-
+-BASEPATH=$(cd `dirname $0`; pwd)
+-
+-ROOT=$BASEPATH/..
+-
+-PIPELINE_ZOO_SWITCH=false
+-DPCPP_SWITCH=false
+-
+-# env, get BUILD_TYPE
+-cd $BASEPATH
+-source env.sh
+-
+-GFX_DRIVER=""
+-TAG_INFO=""
+-IMAGE_NAME="vsr-ov.3-onlydriver"
+-BKC_NAME=""
+-PATCH_ENABLE=false
+-
+-get_options() 
+-{
+-    while :; do
+-        case $1 in
+-        -driver_source)
+-            if [ "$2" ]; then
+-                GFX_DRIVER=$2
+-                shift
+-            else
+-                echo 'ERROR: "-driver_source" requires an argument.'
+-                exit 1
+-            fi
+-            ;;
+-        -bkc)
+-            if [ "$2" ]; then
+-                BKC_NAME=$2
+-                shift
+-            else
+-                echo 'ERROR: "-bkc" requires an argument.'
+-                exit 1
+-            fi
+-            ;;
+-        -install_pipeline_zoo)
+-            PIPELINE_ZOO_SWITCH=true
+-            echo "enable pipeline zoo"
+-            ;;
+-        -install_dpcpp)
+-            DPCPP_SWITCH=true
+-            echo "enable dpcpp"
+-            ;;
+-        -disable_patch)
+-            PATCH_ENABLE=false
+-            echo "disable openvino/dlstreamer patch"
+-            ;;
+-        -tag)
+-            if [ "$2" ]; then
+-                TAG_INFO=$2
+-                shift
+-            else
+-                echo 'ERROR: "-tag" requires an argument.'
+-                exit 1
+-            fi
+-            ;;
+-        -* | --help)
+-            show_help
+-            ;;
+-        ?*)
+-            echo 'ERROR: unexpected option: ' $1
+-            exit 1
+-            ;;
+-        *)
+-			break;
+-            ;;
+-        esac
+-
+-        shift
+-    done
+-}
+-
+-build_image()
+-{
+-    if [ ! -z $TAG_INFO ];then
+-        IMAGE_NAME="${IMAGE_NAME}:${TAG_INFO}"
+-    fi	
+-    # build
+-    cd $ROOT
+-
+-    OTHER_ARGS=""
+-    if [ ! -z $BKC_NAME ];then
+-        if [[ ! -d ${ROOT}/bkc/${BKC_NAME} ]];then
+-            echo "bkc not exist, patchname = ${ROOT}/bkc/${BKC_NAME}"
+-            exit 0
+-        fi
+-        OTHER_ARGS="${OTHER_ARGS} --build-arg BKC_PATH=bkc/${BKC_NAME}"
+-        bash $BASEPATH/bkc_script_update.sh $BKC_NAME centos
+-    fi
+-    if [ ! -z $GFX_DRIVER ];then
+-        OTHER_ARGS="${OTHER_ARGS} --build-arg GFX_DRIVER=${GFX_DRIVER}"
+-    fi
+-    if [[ $PATCH_ENABLE != "true" ]];then
+-        OTHER_ARGS="${OTHER_ARGS} --build-arg PATCH_PATH=release-openvino/asset/empty"
+-    fi
+-
+-    set -x
+-    docker build \
+-        $OTHER_ARGS \
+-        --build-arg PIPELINE_ZOO_SWITCH=$PIPELINE_ZOO_SWITCH \
+-        --build-arg DPCPP_SWITCH=$DPCPP_SWITCH \
+-        --file release-openvino/docker/ubuntu22.04/Dockerfile \
+-        -t $IMAGE_NAME .
+-}
+-
+-show_help()
+-{
+-    echo "usage: build-openvino-docker-ubuntu.sh"
+-    echo "options:"
+-    echo "  -tag                        > tag the docker image"
+-    echo "  -install_pipeline_zoo       > install openvino pipeline zoo"
+-    echo "  -install_dpcpp              > install dpcpp and will enable dlstreamer related features"
+-    echo "  -bkc                        > set customed bkc name, it should be put at bkc folder."
+-    echo "          when bkc is set, -driver_source won't take effect "
+-    echo "  -disable_patch              > disable MA patch."
+-    echo "  -driver_source              > set AXG driver apt source, it can be: "
+-    echo "          jammy          •  External stable ( default value )"
+-    echo "          agama-xxx      •  internal agama, this should be a available name, ex: agama-ci-devel-555"
+-    echo ""
+-    echo "launch sample 1:  ./build-openvino-docker-ubuntu.sh -driver_source agama-ci-devel-555"
+-    echo "launch sample 2:  ./build-openvino-docker-ubuntu.sh -install_pipeline_zoo -install_dpcpp"
+-    echo ""
+-    exit 0
+-}
+-
+-get_options "$@"
+-
+-build_image
+diff --git a/scripts/build-pytorch-docker-ubuntu.sh b/scripts/build-pytorch-docker-ubuntu.sh
+deleted file mode 100755
+index 43585b2d19..0000000000
+--- a/scripts/build-pytorch-docker-ubuntu.sh
++++ /dev/null
+@@ -1,153 +0,0 @@
+-#!/bin/bash
+-# build PyTorch + IPEX GPU docker image from PyTorch + IPEX source code
+-
+-set -e
+-
+-BASEPATH=$(cd `dirname $0`; pwd)
+-
+-ROOT=$BASEPATH/..
+-
+-# config ..
+-AOT_DEVLIST=ats-m150
+-
+-cd $BASEPATH
+-source env.sh
+-
+-
+-GFX_DRIVER=""
+-TAG_INFO=""
+-IMAGE_NAME="basic-vsr"
+-DEV_ENABLE="False"
+-CONDA_URL=""
+-GIT_ACC=
+-GIT_TOKEN=
+-
+-get_options() {
+-    while :; do
+-        case $1 in
+-            -dev)
+-                DEV_ENABLE="True"
+-                ;;
+-            -driver_source)
+-                if [ "$2" ]; then
+-                    GFX_DRIVER=$2
+-                    shift
+-                else
+-                    echo 'ERROR: "-driver_source" requires an argument.'
+-                    exit 1
+-                fi
+-                ;;
+-            -tag)
+-                if [ "$2" ]; then
+-                    TAG_INFO=$2
+-                    shift
+-                else
+-                    echo 'ERROR: "-tag" requires an argument.'
+-                    exit 1
+-                fi
+-                ;;
+-            -conda_url)
+-                if [ "$2" ]; then
+-                    CONDA_URL=$2
+-                    shift
+-                else
+-                    echo 'ERROR: "-conda_url" requires an argument.'
+-                    exit 1
+-                fi
+-                ;;
+-            -git_acc)
+-                if [ "$2" ]; then
+-                    GIT_ACC=$2
+-                    shift
+-                else
+-                    echo 'ERROR: "-git_acc" requires an argument.'
+-                    exit 1
+-                fi
+-                ;;
+-            -git_token)
+-                if [ "$2" ]; then
+-                    GIT_TOKEN=$2
+-                    shift
+-                else
+-                    echo 'ERROR: "-git_token" requires an argument.'
+-                    exit 1
+-                fi
+-                ;;
+-            -* | --help)
+-                show_help
+-                ;;
+-            ?*)
+-                echo 'ERROR: unexpected option: ' $1
+-                exit 1
+-                ;;
+-            *)
+-                break
+-                ;;
+-          esac
+-
+-        shift
+-    done
+-}
+-
+-build_image()
+-{
+-    DOCKER_FILE=release-pytorch/docker/ubuntu22.04/main/Dockerfile
+-    if [[ $DEV_ENABLE == "True" ]]; then
+-        cd $ROOT
+-        D_TMP=scripts/tmp/Dockerfile-pytorch-dev-tmp
+-        cp $DOCKER_FILE $D_TMP
+-        sed -i '/final image/,+1000d' $D_TMP
+-        DOCKER_FILE=$D_TMP
+-    fi
+-
+-    if [ ! -z $TAG_INFO ];then
+-        IMAGE_NAME="${IMAGE_NAME}:${TAG_INFO}"
+-    fi
+-
+-    OTHER_ARGS=""
+-    if [ ! -z $CONDA_URL ];then
+-        OTHER_ARGS="${OTHER_ARGS} --build-arg MINI_CONDA_URL=${CONDA_URL}"
+-    fi
+-    if [ ! -z $GFX_DRIVER ];then
+-        OTHER_ARGS="${OTHER_ARGS} --build-arg GFX_DRIVER=${GFX_DRIVER}"
+-    fi
+-    if [[ ! -z $GIT_ACC && ! -z $GIT_TOKEN ]];then
+-        OTHER_ARGS="${OTHER_ARGS} --build-arg GIT_ACC=${GIT_ACC} --build-arg GIT_TOKEN=${GIT_TOKEN}"
+-    fi
+-
+-    set -x
+-    # build
+-    cd $ROOT
+-    docker build \
+-        --build-arg AOT_DEVLIST="$AOT_DEVLIST" \
+-        --build-arg DEV_SWITCH=$DEV_ENABLE \
+-        $OTHER_ARGS \
+-        --file $DOCKER_FILE \
+-        -t $IMAGE_NAME .
+-}
+-
+-show_help()
+-{
+-    echo "usage: build-pytorch-docker-ubuntu.sh"
+-    echo "options:"
+-    echo "  -tag                        > tag the docker image"
+-    echo "  -dev                        > build as develop image"
+-    echo "  -driver_source              > set AXG driver apt source, it can be: "
+-    echo "          jammy          •  External stable ( default value )"
+-    echo "          agama-xxx      •  internal agama, this should be a available name, ex: agama-ci-devel-555"
+-    echo ""
+-    echo "launch sample 1:  ./build-pytorch-docker-ubuntu.sh -driver_source jammy"
+-    echo "launch sample 2:  ./build-pytorch-docker-ubuntu.sh -dev -driver_source agama-ci-devel-555"
+-    echo ""
+-    exit 0
+-}
+-
+-get_options "$@"
+-
+-build_image
+-
+-
+-
+-
+-
+-
+diff --git a/scripts/build-pytorch-testdocker.sh b/scripts/build-pytorch-testdocker.sh
+deleted file mode 100755
+index 3d251ec549..0000000000
+--- a/scripts/build-pytorch-testdocker.sh
++++ /dev/null
+@@ -1,62 +0,0 @@
+-#!/bin/bash
+-
+-set -e
+-
+-GPU_MODEL_REPO=https://github.com/intel-innersource/frameworks.ai.pytorch.gpu-models.git
+-GPU_MODEL_COMMIT=0f94096d948161caba2232c447785695776f1991
+-
+-BASEPATH=$(cd `dirname $0`; pwd)
+-
+-ROOT=$BASEPATH/..
+-
+-# env, get BUILD_TYPE
+-cd $BASEPATH
+-source env.sh
+-
+-BASE_IMAGE=$1
+-BASE_OS=$2
+-
+-if [ -z $BASE_IMAGE ]; then
+-	echo 'please input $1 as the base image from docker images, it can be :'
+-	docker images | grep 'intel-vsr'
+-	exit 1
+-fi
+-
+-TAG=${BASE_IMAGE#*:}
+-if [ $TAG = $BASE_IMAGE ]; then
+-	echo 'TAG should be included in image name, as $NAME:$TAG'
+-	exit 1
+-fi
+-if [[ $BASE_OS == "ubuntu" ]] || [[ $BASE_OS == "centos" ]];then
+-	echo $BASE_OS
+-else
+-	echo 'unsupport base system'
+-	exit 1
+-fi
+-
+-
+-OUT_IMAGE=${BASE_IMAGE/:/-test:}
+-
+-echo "out image = $OUT_IMAGE"
+-sleep 3
+-
+-cd $BASEPATH
+-GMODUL_FOLDER=tmp/gpu-models-$GPU_MODEL_COMMIT
+-if [[ ! -d $GMODUL_FOLDER ]];then
+-	git clone $GPU_MODEL_REPO $GMODUL_FOLDER
+-	cd $GMODUL_FOLDER
+-	git checkout $GPU_MODEL_COMMIT
+-	rm -rf .git
+-fi
+-
+-set -x
+-
+-# build
+-cd $ROOT
+-docker build \
+-   --build-arg BASE_IMAGE=$BASE_IMAGE \
+-   --build-arg GPU_MODELS=scripts/$GMODUL_FOLDER \
+-   --build-arg BASE_OS=$BASE_OS \
+-   --file tests/pytorch/docker/Dockerfile \
+-   -t $OUT_IMAGE .
+-
+diff --git a/scripts/env.sh b/scripts/env.sh
+deleted file mode 100755
+index b31b255722..0000000000
+--- a/scripts/env.sh
++++ /dev/null
+@@ -1,17 +0,0 @@
+-#!/bin/bash
+-
+-export BUILD_TYPE=stable
+-
+-# models for testing, update it for your env
+-export MODEL_PATH=/home/media/models
+-
+-# content like vidio / photo for testing, update it for your env
+-export CONTENT_PATH=/home/media/content
+-
+-# docker image name define
+-export UBUNTU_BUILD_IMAGE=intel-mass-openvino-ubuntu22.04-$BUILD_TYPE
+-export CENTOS_BUILD_IMAGE=intel-mass-openvino-centos7-$BUILD_TYPE
+-export PYTORCH_UBUNTU_IMAGE=intel-mass-pytorch-ubuntu22.04-$BUILD_TYPE
+-export PYTORCH_CENTOS_IMAGE=intel-mass-pytorch-centos8-$BUILD_TYPE
+-export TENSORFLOW_UBUNTU_IMAGE=intel-mass-tensorflow-ubuntu20.04-$BUILD_TYPE
+-
+diff --git a/scripts/gpg b/scripts/gpg
+deleted file mode 100644
+index ee7872e5d0..0000000000
+--- a/scripts/gpg
++++ /dev/null
+@@ -1,62 +0,0 @@
+------BEGIN PGP PUBLIC KEY BLOCK-----
+-
+-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
+-YT90qFF93M3v01BbxP+EIY2/9tiIPbrd
+-=0YYh
+------END PGP PUBLIC KEY BLOCK-----
+diff --git a/scripts/run-docker.sh b/scripts/run-docker.sh
+deleted file mode 100755
+index e58fdd99c9..0000000000
+--- a/scripts/run-docker.sh
++++ /dev/null
+@@ -1,24 +0,0 @@
+-#!/bin/bash
+-# a sample for run image
+-
+-BASEPATH=$(cd `dirname $0`; pwd)
+-
+-cd $BASEPATH
+-source env.sh
+-
+-IMAGE=$1
+-
+-if [ -z $IMAGE ]; then
+-    echo "we should input the image name"
+-    echo "there are:"
+-    docker images | grep 'intel-mass'
+-    exit 1
+-fi
+-
+-echo "run image: $IMAGE"
+-
+-docker run --user root -it --rm --privileged=true \
+-  -v /dev:/dev -v /tmp:/tmp -v /var/tmp:/var/tmp \
+-  -v $MODEL_PATH:/opt/assert/models -v $CONTENT_PATH:/opt/assert/content \
+-  $IMAGE
+-
+diff --git a/vsr_opt/VSR Introduction.md b/vsr_opt/VSR Introduction.md
+index 5d651ab1c2..2ae3256ff4 100644
+--- a/vsr_opt/VSR Introduction.md	
++++ b/vsr_opt/VSR Introduction.md	
+@@ -24,14 +24,9 @@ python tools/pytorch2onnx.py --input_model <Pytorch model> --output_dir <Output
+ Then the ONNX model needs to be further converted to OpenVINO Intermediate Representation (IR) formats. Call the OpenVINO Model Optimizer tool to convert the ONNX model to OpenVINO IR.
+ First, install new mo and pot python package.
+ ```bash
+-cd <PATH_TO_THIS_PROJECT>
+-source install/setupvars.sh
+-
+ mkdir <PATH_TO_THIS_PROJECT>/wheels
+ cd <PATH_TO_THIS_PROJECT>/tools/mo && python3 setup.py build && python3 setup.py bdist_wheel --dist-dir=<PATH_TO_THIS_PROJECT>/wheels
+-pip install -r requirements.txt
+ cd <PATH_TO_THIS_PROJECT>/tools/pot && python3 setup.py build && python3 setup.py bdist_wheel --dist-dir=<PATH_TO_THIS_PROJECT>/wheels
+-
+ sudo python3 -m pip install <PATH_TO_THIS_PROJECT>/wheels/*
+ rm -r <PATH_TO_THIS_PROJECT>/wheels
+ ```
+@@ -41,7 +36,7 @@ sudo python3 -m pip uninstall <PATH_TO_THIS_PROJECT>/wheels/*
+ ```
+ Then, run `mo.py` with the following command:
+ ```bash
+-cd <PATH_TO_THIS_PROJECT>/tools/mo
++cd <PATH_TO_THIS_PROJECT>
+ python3 tools/mo/openvino/tools/mo/mo.py --input_model <ONNX model> --extensions tools/mo/openvino/tools/mo/custom_op_mo_extension/ --extension_for_ngraph_validation bin/intel64/lib/libcustom_extension.so --output_dir <Output dir to store OpenVINO IR>
+ ```
+ 
+@@ -51,11 +46,7 @@ python3 tools/mo/openvino/tools/mo/mo.py --input_model <ONNX model> --extensions
+ 
+ Since the precision of original Pytorch model may be FP32 or FP16, in order to cut down the memory cost and accelerate the inference process you may need to perform model quantization. OpenVINO provides a Post-training Optimization Tool (POT) which supports the uniform integer quantization method. There is a sample script `quantization.py` to perform INT8 quantization . You may perform INT8 quantization by command:
+ ```bash
+-cd <PATH_TO_THIS_PROJECT>/thirdparty/open_model_zoo/tools/accuracy_checker && python3 setup.py build && python3 setup.py bdist_wheel --dist-dir=<PATH_TO_THIS_PROJECT>/wheels
+-pip install <PATH_TO_THIS_PROJECT>/wheels/*
+-
+-cd <PATH_TO_THIS_PROJECT>/vsr_opt/tools
+-python3 quantization.py --input_model <XML model to be quantized> --dataset_path <Path of calibration dataset> --sub_folder <Scenario sub-folder of calibration dataset> --nif <Number of input frames>  --extension bin/intel64/lib/libcustom_extension.so
++python3 quantization.py --input_model <XML model to be quantized> --dataset_path <Path of calibration dataset> --sub_folder <Scenario sub-folder of calibration dataset> --nif <Number of input frames>  
+ ```
+ 
+ 
+-- 
+2.25.1
+

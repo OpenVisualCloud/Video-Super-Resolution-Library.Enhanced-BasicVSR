@@ -1,0 +1,65 @@
+From c9bef6b18ba481e6dd3bb29abf5ee6be7712a5ae Mon Sep 17 00:00:00 2001
+From: Liang <xiaoxia.liang@intel.com>
+Date: Thu, 25 Apr 2024 23:15:36 +0800
+Subject: [PATCH] ivsr plugin: remove useless input parameters.
+
+Signed-off-by: Liang <xiaoxia.liang@intel.com>
+---
+ libavfilter/dnn_filter_common.h |  4 ----
+ libavfilter/vf_dnn_processing.c | 11 -----------
+ 2 files changed, 15 deletions(-)
+
+diff --git a/libavfilter/dnn_filter_common.h b/libavfilter/dnn_filter_common.h
+index 3a506e1f61..5bad86898f 100644
+--- a/libavfilter/dnn_filter_common.h
++++ b/libavfilter/dnn_filter_common.h
+@@ -41,10 +41,6 @@ typedef struct DnnContext {
+     AVFifo *in_queue;
+     AVFifo *out_queue;
+     int nif;
+-    int input_width;
+-    int input_height;
+-    int output_width;
+-    int output_height;
+ } DnnContext;
+ 
+ #define DNN_COMMON_OPTIONS \
+diff --git a/libavfilter/vf_dnn_processing.c b/libavfilter/vf_dnn_processing.c
+index 61d0ec4458..10be339e05 100644
+--- a/libavfilter/vf_dnn_processing.c
++++ b/libavfilter/vf_dnn_processing.c
+@@ -57,10 +57,6 @@ static const AVOption dnn_processing_options[] = {
+ #endif
+     DNN_COMMON_OPTIONS
+     { "nif",         "number of input frames, NOT usable for BasicVSR model",     OFFSET(nif),              AV_OPT_TYPE_INT,       { .i64 = 3 },    1,      INT_MAX, FLAGS },
+-    { "input_width", "input video width",     OFFSET(input_width),              AV_OPT_TYPE_INT,       { .i64 = 1920 },    1, INT_MAX, FLAGS },
+-    { "input_height","input video height",     OFFSET(input_height),              AV_OPT_TYPE_INT,       { .i64 = 1080 },    1, INT_MAX, FLAGS },
+-    { "output_width","output video width, NOT usable for BasicVSR model",     OFFSET(output_width),              AV_OPT_TYPE_INT,       { .i64 = 3840 },    1, INT_MAX, FLAGS },
+-    { "output_height", "output video height, NOT usable for BasicVSR model'",     OFFSET(output_height),              AV_OPT_TYPE_INT,       { .i64 = 2160 },    1, INT_MAX, FLAGS },
+     { NULL }
+ };
+ 
+@@ -171,10 +167,6 @@ static int config_input(AVFilterLink *inlink)
+         return result;
+     }
+ 
+-    if ((ctx->dnnctx.input_width != model_input.width) || (ctx->dnnctx.input_height != model_input.height)) 
+-        av_log(ctx, AV_LOG_WARNING, "The command seting of input width or height is different to the model requirement\n");
+-
+-
+     check = check_modelinput_inlink(&model_input, inlink);
+     if (check != 0) {
+         return check;
+@@ -235,9 +227,6 @@ static int config_output(AVFilterLink *outlink)
+         return result;
+     }
+ 
+-    if ((ctx->dnnctx.output_width != outlink->w) || (ctx->dnnctx.output_height != outlink->h))
+-        av_log(ctx, AV_LOG_WARNING, "The command seting of output width or height is different to the model requirement\n");
+-
+     prepare_uv_scale(outlink);
+ 
+     return 0;
+-- 
+2.34.1
+

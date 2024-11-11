@@ -1,0 +1,102 @@
+From 5aa64b6e9fd7d0b285443e7221f249b980d43d58 Mon Sep 17 00:00:00 2001
+From: Jerry Dong <jerry.dong@intel.com>
+Date: Mon, 15 Apr 2024 09:53:57 +0800
+Subject: [PATCH] refine ivsr plugin: 1)incorrect configure of nb_inputs,
+ 2)remove useless input parameter
+
+---
+ libavfilter/dnn/dnn_backend_common.c |  2 +-
+ libavfilter/dnn/dnn_backend_ivsr.c   | 18 ++----------------
+ libavfilter/dnn_filter_common.c      |  8 --------
+ 3 files changed, 3 insertions(+), 25 deletions(-)
+
+diff --git a/libavfilter/dnn/dnn_backend_common.c b/libavfilter/dnn/dnn_backend_common.c
+index 3c31d1b32c..f9f4c2d83b 100644
+--- a/libavfilter/dnn/dnn_backend_common.c
++++ b/libavfilter/dnn/dnn_backend_common.c
+@@ -184,5 +184,5 @@ int ff_dnn_fill_gettingoutput_task(TaskItem *task, DNNExecBaseParams *exec_param
+     exec_params->in_frame = in_frame;
+     exec_params->out_frame = out_frame;
+ 
+-    return ff_dnn_fill_task(task, exec_params, backend_model, 1, 0);
++    return ff_dnn_fill_task(task, exec_params, backend_model, 0, 0);
+ }
+diff --git a/libavfilter/dnn/dnn_backend_ivsr.c b/libavfilter/dnn/dnn_backend_ivsr.c
+index 80c209cff0..f088dd1e3e 100644
+--- a/libavfilter/dnn/dnn_backend_ivsr.c
++++ b/libavfilter/dnn/dnn_backend_ivsr.c
+@@ -71,8 +71,6 @@ typedef struct IVSRModel {
+     SafeQueue *request_queue;
+     Queue *task_queue;
+     Queue *lltask_queue;
+-    const char *all_input_names;
+-    const char *all_output_names;
+     ModelType model_type;
+ } IVSRModel;
+ 
+@@ -452,8 +450,7 @@ static int get_input_ivsr(void *model, DNNData * input,
+     return 0;
+ }
+ 
+-static int extract_lltask_from_task(TaskItem * task, Queue * lltask_queue,
+-                                    DNNExecBaseParams * exec_params)
++static int extract_lltask_from_task(TaskItem * task, Queue * lltask_queue)
+ {
+ 
+     LastLevelTaskItem *lltask = av_malloc(sizeof(*lltask));
+@@ -595,8 +592,6 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+     ivsr_model->model = model;
+     ivsr_model->ctx.class = &dnn_ivsr_class;
+     ctx = &ivsr_model->ctx;
+-    ivsr_model->all_input_names = NULL;
+-    ivsr_model->all_output_names = NULL;
+ 
+     // parse options
+     av_opt_set_defaults(ctx);
+@@ -710,13 +705,6 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+         goto err;
+     }
+ 
+-    status = ivsr_get_attr(ivsr_model->handle, NUM_INPUT_FRAMES, &nif);
+-    if (status != OK) {
+-        av_log(ctx, AV_LOG_ERROR, "Failed to get nif\n");
+-        goto err;
+-    }
+-    filter_ctx->nb_inputs = nif;
+-
+     status =
+         ivsr_get_attr(ivsr_model->handle, INPUT_TENSOR_DESC, input_dims);
+     if (status != OK) {
+@@ -841,9 +829,7 @@ int ff_dnn_execute_model_ivsr(const DNNModel * model,
+         return AVERROR(ENOMEM);
+     }
+ 
+-    ret =
+-        extract_lltask_from_task(task, ivsr_model->lltask_queue,
+-                                 exec_params);
++    ret = extract_lltask_from_task(task, ivsr_model->lltask_queue);
+     if (ret != 0) {
+         av_log(ctx, AV_LOG_ERROR,
+                "unable to extract inference from task.\n");
+diff --git a/libavfilter/dnn_filter_common.c b/libavfilter/dnn_filter_common.c
+index b0416e9f50..2d437f0fbc 100644
+--- a/libavfilter/dnn_filter_common.c
++++ b/libavfilter/dnn_filter_common.c
+@@ -80,14 +80,6 @@ int ff_dnn_init(DnnContext *ctx, DNNFunctionType func_type, AVFilterContext *fil
+ 
+     ctx->model = (ctx->dnn_module->load_model)(ctx->model_filename, func_type, ctx->backend_options, filter_ctx);
+     
+-    if (filter_ctx->nb_inputs != ctx->nif) {
+-        av_log(filter_ctx, AV_LOG_WARNING, "nif is different to the model requirement, use model setting!\n");
+-        ctx->nif = filter_ctx->nb_inputs;
+-        filter_ctx->nb_inputs = 1;
+-    } else {
+-        filter_ctx->nb_inputs = 1;
+-    }
+-    
+     if (!ctx->model) {
+         av_log(filter_ctx, AV_LOG_ERROR, "could not load DNN model\n");
+         return AVERROR(EINVAL);
+-- 
+2.34.1
+

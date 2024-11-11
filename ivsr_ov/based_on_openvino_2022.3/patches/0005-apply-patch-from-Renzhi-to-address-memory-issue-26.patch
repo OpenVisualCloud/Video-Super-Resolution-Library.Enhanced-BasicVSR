@@ -1,0 +1,462 @@
+From 5c3dffd16ba4823bed67d75aca4ebca42de034e0 Mon Sep 17 00:00:00 2001
+From: KunLong9 <105702843+KunLong9@users.noreply.github.com>
+Date: Thu, 16 Mar 2023 10:10:12 +0800
+Subject: [PATCH 5/7] apply patch from Renzhi to address memory issue (#26)
+
+---
+ .../include/intel_gpu/runtime/engine.hpp      |   3 +-
+ .../include/intel_gpu/runtime/memory_pool.hpp |  12 +-
+ .../intel_gpu/src/graph/primitive_inst.cpp    |  31 +++-
+ src/plugins/intel_gpu/src/graph/program.cpp   |   7 +-
+ .../intel_gpu/src/runtime/memory_pool.cpp     | 157 ++++++++++++++----
+ .../intel_gpu/src/runtime/ocl/ocl_engine.cpp  |  12 +-
+ .../intel_gpu/src/runtime/ocl/ocl_engine.hpp  |   2 +-
+ 7 files changed, 182 insertions(+), 42 deletions(-)
+
+diff --git a/src/plugins/intel_gpu/include/intel_gpu/runtime/engine.hpp b/src/plugins/intel_gpu/include/intel_gpu/runtime/engine.hpp
+index 176ae7d447..40e49bac71 100644
+--- a/src/plugins/intel_gpu/include/intel_gpu/runtime/engine.hpp
++++ b/src/plugins/intel_gpu/include/intel_gpu/runtime/engine.hpp
+@@ -57,7 +57,8 @@ public:
+     virtual memory_ptr reinterpret_handle(const layout& new_layout, shared_mem_params params) = 0;
+ 
+     /// Created memory object from the other @p memory and reinterpred the data using specified @p new_layout
+-    virtual memory_ptr reinterpret_buffer(const memory& memory, const layout& new_layout) = 0;
++    // virtual memory_ptr reinterpret_buffer(const memory& memory, const layout& new_layout) = 0; //@longkun
++    virtual memory_ptr reinterpret_buffer(const memory& memory, const layout& new_layout, const size_t offset = 0) = 0;
+ 
+     /// Create shared memory object using user-supplied memory buffer @p buf using specified @p layout
+     memory_ptr share_buffer(const layout& layout, shared_handle buf);
+diff --git a/src/plugins/intel_gpu/include/intel_gpu/runtime/memory_pool.hpp b/src/plugins/intel_gpu/include/intel_gpu/runtime/memory_pool.hpp
+index 4771fcb775..4751d91e9b 100644
+--- a/src/plugins/intel_gpu/include/intel_gpu/runtime/memory_pool.hpp
++++ b/src/plugins/intel_gpu/include/intel_gpu/runtime/memory_pool.hpp
+@@ -29,12 +29,15 @@ using memory_ptr = std::shared_ptr<memory>;
+ struct memory_user {
+     primitive_id _id;
+     uint32_t _network_id;
++    size_t _size;   // @longkun:
++    size_t _offset; // @longkun:
++    
+ 
+-    memory_user(primitive_id id, uint32_t network_id)
+-        : _id(id), _network_id(network_id) {}
++    memory_user(primitive_id id, uint32_t network_id, size_t size, size_t offset = 0)
++        : _id(id), _network_id(network_id), _size(size), _offset(offset) {} //@longkun:
+ 
+     friend std::ostream& operator<<(std::ostream& os, const memory_user& memory_user) {
+-        os << memory_user._id << "(" << memory_user._network_id << ")";
++        os << memory_user._id << "(" << memory_user._network_id << ", offset:" << memory_user._offset <<")"; //@longkun:
+         return os;
+     }
+ };
+@@ -91,8 +94,7 @@ class memory_pool {
+     memory_pool();
+ 
+     memory_ptr alloc_memory(const layout& layout, allocation_type type, bool reset = true);
+-    static bool has_conflict(const memory_set&, const std::set<primitive_id>&, uint32_t network_id);
+-
++    static std::vector<primitive_id> get_conflicts(const memory_set&, const std::set<primitive_id>&, uint32_t network_id); //@longkun:
+     std::multimap<uint64_t, memory_record> _non_padded_pool;
+     std::map<layout, std::list<memory_record>, padded_pool_comparer> _padded_pool;
+     std::multimap<uint64_t, memory_record> _no_reusable_pool;
+diff --git a/src/plugins/intel_gpu/src/graph/primitive_inst.cpp b/src/plugins/intel_gpu/src/graph/primitive_inst.cpp
+index e814dafa91..6009eb4844 100644
+--- a/src/plugins/intel_gpu/src/graph/primitive_inst.cpp
++++ b/src/plugins/intel_gpu/src/graph/primitive_inst.cpp
+@@ -519,6 +519,16 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
+         }
+     }
+ 
++#if 0  //@longkun
++    //add memset for padded buffer to remove some reorder and border options
++    auto out_layout = output_memory_ptr()->get_layout();
++    if(output_memory_ptr()->is_memory_reset_needed(out_layout)) {
++        std::cout << "[DEBUG/MEMSET]" << id() << std::endl;
++        auto ev = output_memory_ptr()->fill(this->get_network().get_stream());
++        dependencies.emplace_back(ev);
++    }
++#endif
++
+     {
+         GPU_DEBUG_PROFILED_STAGE(instrumentation::pipeline_stage::inference);
+         auto ev = _impl->execute(dependencies, *this);
+@@ -853,9 +863,10 @@ memory::ptr primitive_inst::allocate_output(engine& _engine, memory_pool& pool,
+                                !_engine.supports_allocation(allocation_type::usm_device);
+     GPU_DEBUG_GET_INSTANCE(debug_config);
+     const auto& lockable_mem_type = _engine.get_lockable_preferred_memory_allocation_type(layout.format.is_image_2d());
+-    const auto& alloc_type = use_lockable_memory ? lockable_mem_type
++    auto alloc_type = use_lockable_memory ? lockable_mem_type  // @longkun
+         : usm_device_allocatable ? allocation_type::usm_device : lockable_mem_type;
+ 
++    
+     if ((is_internal && (_node.can_be_optimized() || _node.is_type<generic_layer>())) || (memory_reuse_by_user == false)) {
+         GPU_DEBUG_IF(debug_config->verbose >= 2) {
+             GPU_DEBUG_COUT << "[" << _node.id() << ": output]" << std::endl;
+@@ -883,14 +894,30 @@ memory::ptr primitive_inst::allocate_output(engine& _engine, memory_pool& pool,
+         GPU_DEBUG_IF(debug_config->verbose >= 2) {
+             GPU_DEBUG_COUT << "[" << _node.id() << ": output]" << std::endl;
+         }
++        //@longkun:start---
++        auto allocated_memory = _engine.get_used_device_memory(alloc_type);
++        if (alloc_type == allocation_type::usm_device &&
++            allocated_memory + layout.bytes_count() > _engine.get_device_info().max_global_mem_size) {
++            alloc_type = allocation_type::usm_host;
++        }//@longkun:---end
+         return _engine.allocate_memory(layout, alloc_type);
+     } else {
+-        return get_memory_from_pool(_engine,
++        auto mem = get_memory_from_pool(_engine, //@longkun
+                 layout,
+                 _node.id(),
+                 _node.get_memory_dependencies(),
+                 alloc_type,
+                 true);
++        if (mem == nullptr) { //@longkun:start----
++            auto changed_alloc_type = allocation_type::usm_host;
++            mem = get_memory_from_pool(_engine,
++                layout,
++                _node.id(),
++                _node.get_memory_dependencies(),
++                changed_alloc_type,
++                true);
++        }
++        return mem; //@longkun:----end
+     }
+ }
+ 
+diff --git a/src/plugins/intel_gpu/src/graph/program.cpp b/src/plugins/intel_gpu/src/graph/program.cpp
+index 5d13b23bbe..bb50d79a30 100644
+--- a/src/plugins/intel_gpu/src/graph/program.cpp
++++ b/src/plugins/intel_gpu/src/graph/program.cpp
+@@ -568,8 +568,8 @@ void program::pre_optimize_graph(bool is_internal) {
+     // handle symmetric and asymmetric padding for input
+     apply_opt_pass<handle_input_padding>();
+ 
+-    processing_order.calculate_BFS_processing_order();  // this method makes sense only for OOOQ (out of order execution queue)
+-
++    if (get_engine().configuration().queue_type == cldnn::queue_types::out_of_order) // @longkun
++        processing_order.calculate_BFS_processing_order();  // this method makes sense only for OOOQ (out of order execution queue) 
+     apply_opt_pass<reverse_optional_nodes_outputs>();
+ 
+     bool output_size_handling_enabled = analyze_output_size_handling_need();
+@@ -790,7 +790,8 @@ void program::prepare_memory_dependencies() {
+ 
+     apply_opt_pass<basic_memory_dependencies>();
+     apply_opt_pass<skipped_branch_memory_dependencies>();
+-    apply_opt_pass<oooq_memory_dependencies>();
++    if(get_engine().configuration().queue_type == cldnn::queue_types::out_of_order) //@longkun
++        apply_opt_pass<oooq_memory_dependencies>();
+ }
+ 
+ std::string program::get_memory_dependencies_string() const {
+diff --git a/src/plugins/intel_gpu/src/runtime/memory_pool.cpp b/src/plugins/intel_gpu/src/runtime/memory_pool.cpp
+index 5bf970f22c..d025c85d4c 100644
+--- a/src/plugins/intel_gpu/src/runtime/memory_pool.cpp
++++ b/src/plugins/intel_gpu/src/runtime/memory_pool.cpp
+@@ -30,7 +30,7 @@ memory::ptr memory_pool::alloc_memory(const layout& layout, allocation_type type
+ 
+ memory_pool::~memory_pool() {}
+ 
+-bool memory_pool::has_conflict(const memory_set& a,
++std::vector<primitive_id> memory_pool::get_conflicts(const memory_set& a, //@longkun:
+                                const std::set<primitive_id>& b,
+                                uint32_t b_network_id) {
+     std::set<primitive_id> a_same_network;
+@@ -46,7 +46,7 @@ bool memory_pool::has_conflict(const memory_set& a,
+                      b.begin(),
+                      b.end(),
+                      std::back_inserter(intersection));
+-    return !intersection.empty();
++    return intersection; //@longkun:
+ }
+ 
+ void memory_pool::release_memory(memory* mem, const primitive_id& id, uint32_t network_id) {
+@@ -62,8 +62,11 @@ void memory_pool::release_memory(memory* mem, const primitive_id& id, uint32_t n
+             if (it->second._network_id == network_id &&
+                 it->second._type == type &&
+                 it->second._memory.get() == mem) {
+-                auto user_it = it->second._users.find({ id, network_id });
+-
++                auto user_it = it->second._users.begin(); //@longkun: start---
++                for (; user_it != it->second._users.end(); user_it ++) {
++                    if (user_it->_id == id && user_it->_network_id == network_id)
++                        break;
++                } //@lognkun:---end
+                 // normally there should be only one entry
+                 if (user_it != it->second._users.end()) {
+                     user_it = it->second._users.erase(user_it);
+@@ -91,7 +94,11 @@ void memory_pool::release_memory(memory* mem, const primitive_id& id, uint32_t n
+                 if (list_itr->_memory.get() == mem &&
+                     list_itr->_network_id == network_id &&
+                     list_itr->_type == type) {
+-                    auto user_it = list_itr->_users.find({ id, network_id });
++                    auto user_it = list_itr->_users.begin(); //@longkun:start---
++                    for (; user_it != list_itr->_users.end(); user_it ++) {
++                        if (user_it->_id == id && user_it->_network_id == network_id)
++                            break;
++                    } //@longkun:---end
+ 
+                     // normally there should be only one entry
+                     if (user_it != list_itr->_users.end()) {
+@@ -121,31 +128,108 @@ memory::ptr memory_pool::get_from_non_padded_pool(const layout& layout,
+                                                   uint32_t network_id,
+                                                   const std::set<primitive_id>& restrictions,
+                                                   allocation_type type) {
++    GPU_DEBUG_GET_INSTANCE(debug_config); //@longkun:
+     auto it = _non_padded_pool.lower_bound(layout.bytes_count());
+     while (it != _non_padded_pool.end()) {
+-        if (it->second._network_id == network_id &&
+-            it->second._type == type &&
+-            it->second._memory->get_layout().format != format::fs_b_yx_fsv32 &&
+-            layout.format != format::fs_b_yx_fsv32 &&
+-            ((layout.format != format::b_fs_yx_fsv32 && layout.format != format::b_fs_zyx_fsv32) ||
+-             (layout.feature() % 32 == 0)) &&
+-            !has_conflict(it->second._users, restrictions, network_id)) {
+-            it->second._users.insert(memory_user(id, network_id));
++        auto conflicts = get_conflicts(it->second._users, restrictions, network_id);//@longkun:start----
++        bool may_reuse = (it->second._network_id == network_id) && it->second._type == type &&
++                            it->second._memory->get_layout().format != format::fs_b_yx_fsv32 &&
++                            layout.format != format::fs_b_yx_fsv32 &&
++                            ((layout.format != format::b_fs_yx_fsv32 && layout.format != format::b_fs_zyx_fsv32) ||
++                            (layout.feature() % 32 == 0));
++
++        if (may_reuse && conflicts.empty()) {//no conflict, reuse directly
++            GPU_DEBUG_IF(debug_config->verbose >= 2) {
++                if (type == allocation_type::usm_device) {
++                    GPU_DEBUG_COUT << id << "(" << layout.bytes_count() << ")" << "reuse memory (" << it->second._memory << ") with size:"<< it->second._memory->get_layout().bytes_count() << std::endl;
++                }
++            }
++
++            it->second._users.insert(memory_user(id, network_id, layout.bytes_count(), 0)); //@longkun:----end
+             auto ret_mem = _engine->reinterpret_buffer(*it->second._memory, layout);
+             return ret_mem;
+-        } else {
++        }//@longkun:start----
++        else if (may_reuse) {//may resue, need to figure out whether it has available slot
++            std::vector<std::vector<size_t>> intervals;
++            for (auto conflict : conflicts) {
++                for (auto &user : it->second._users) {
++                    if (user._id == conflict) {
++                        intervals.push_back({user._offset, user._offset + user._size});
++                    }
++                }
++            }
++            //merge overlapped intervals
++            sort(intervals.begin(), intervals.end());
++            std::vector<std::vector<size_t>> res = {intervals[0]};
++            for (size_t i = 1; i < intervals.size(); i++) {
++                if (res.back()[1] >= intervals[i][0]) {
++                    res.back()[1] = std::max(res.back()[1], intervals[i][1]);
++                    continue;
++                } else {
++                    res.push_back(intervals[i]);
++                }
++            }
++
++            std::vector<std::vector<size_t>> availables = {};
++            if (res[0][0] > 0)
++                availables.push_back({res[0][0], 0 });
++            for (size_t i = 0; i < res.size() - 1; i++) {
++                availables.push_back({res[i+1][0] - res[i][1], res[i][1]});
++            }
++            if (res.back()[1] < it->second._memory->get_layout().bytes_count()) {
++                availables.push_back({it->second._memory->get_layout().bytes_count() - res.back()[1], res.back()[1]});
++            }
++
++            sort(availables.begin(), availables.end());
++
++            size_t offset = 0; size_t i = 0;
++            for (; i < availables.size(); i ++) {
++                if (availables[i][0] >= layout.bytes_count()) {
++                    offset = availables[i][1];
++                    break;
++                }
++            }
++
++            if ( i == availables.size()) {
++                ++it;
++                continue;
++            }
++
++            GPU_DEBUG_IF(debug_config->verbose >= 2) {
++                if (type == allocation_type::usm_device) {
++                    GPU_DEBUG_COUT << id << "(" << layout.bytes_count() << ")" << "reuse memory (ptr:" << it->second._memory <<", size" << it->second._memory->get_layout().bytes_count() << ") with offset:"<< offset << std::endl;
++                }
++            }
++
++            it->second._users.insert(memory_user(id, network_id, layout.bytes_count(), offset));
++            auto ret_mem = _engine->reinterpret_buffer(*it->second._memory, layout, offset);
++            return ret_mem;
++
++        } 
++        else { //impossible to resue the memory  //@longkun:---end
+             ++it;
+         }
+     }
+-    GPU_DEBUG_GET_INSTANCE(debug_config);
+-    GPU_DEBUG_IF(debug_config->verbose >= 2) {
+-        GPU_DEBUG_COUT << "[" << id << ": output]" << std::endl;
+-    }
++    
++    //TODO: temporary workround for insufficient memory by Renzhi  // @lognkun:start--- different from ov1
++    auto allocated_memory = _engine->get_used_device_memory(type);
++    if (type == allocation_type::usm_device &&
++            allocated_memory + layout.bytes_count() > _engine->get_device_info().max_global_mem_size) {
++                GPU_DEBUG_IF(debug_config->verbose >= 1){
++                    GPU_DEBUG_COUT << "Warning: No available device memory for " << id << ", will use system memory instead." << std::endl;
++                }
++                return nullptr;  //@longkun:---end
++        }
++    
+     // didn't find anything for you? create new resource
+     auto mem = alloc_memory(layout, type);
+     {
+         _non_padded_pool.emplace(layout.bytes_count(),
+-                                 memory_record({{id, network_id}}, mem, network_id, type));
++                                 memory_record({{id, network_id, layout.bytes_count(), 0}}, mem, network_id, type)); //@longkun:start----
++    }
++
++    GPU_DEBUG_IF(debug_config->verbose >= 2) {
++        GPU_DEBUG_COUT << "[non-padded, " << id  << "(mem:" << mem  << ",type:" << type << ")"<< ": output]" << std::endl; //@longkun:----end
+     }
+     return mem;
+ }
+@@ -159,6 +243,7 @@ memory::ptr memory_pool::get_from_padded_pool(const layout& layout,
+ 
+     if (first_level_cache != _padded_pool.end()) {
+         for (auto& rec_list : first_level_cache->second) {
++            auto conflicts = get_conflicts(rec_list._users, restrictions, network_id); //@longkun
+             if (rec_list._network_id == network_id &&
+                 rec_list._type == type &&
+                 ((layout.format != format::b_fs_yx_fsv32 && layout.format != format::b_fs_zyx_fsv32) ||
+@@ -167,24 +252,39 @@ memory::ptr memory_pool::get_from_padded_pool(const layout& layout,
+                 layout.feature() <= rec_list._memory->get_layout().feature() &&
+                 layout.batch() <= rec_list._memory->get_layout().batch() &&
+                 rec_list._memory->get_layout().format != format::fs_b_yx_fsv32 &&
+-                layout.format != format::fs_b_yx_fsv32 &&
+-                !has_conflict(rec_list._users, restrictions, network_id)) {
+-                rec_list._users.insert({id, network_id});
++                layout.format != format::fs_b_yx_fsv32 && conflicts.empty()) { //@longkun:start----
++                rec_list._users.insert({id, network_id, layout.bytes_count(), 0});//@longkun:---end
+                 auto ret_mem = _engine->reinterpret_buffer(*(rec_list._memory), layout);
+                 return ret_mem;
+             }
+         }
++
++        //TODO: temporary workround for insufficient memory by Renzhi @longkun:start----
++        auto allocated_memory = _engine->get_used_device_memory(type);
++        if (type == allocation_type::usm_device &&
++            allocated_memory + layout.bytes_count() > _engine->get_device_info().max_global_mem_size) {
++            return nullptr;
++        } // @longkun:---end
++
+         auto mem = alloc_memory(layout, type);
+         first_level_cache->second.emplace_back(
+-            memory_record({{id, network_id}}, mem, network_id, type));
++            memory_record({{id, network_id, layout.bytes_count(), 0}}, mem, network_id, type)); //@longkun:
+         return mem;
+     }
+     GPU_DEBUG_GET_INSTANCE(debug_config);
+     GPU_DEBUG_IF(debug_config->verbose >= 2) {
+-        GPU_DEBUG_COUT << "[" << id << ": output]" << std::endl;
++        GPU_DEBUG_COUT << "[padded, " << id << ": output]" << std::endl; //@longkun:
+     }
++
++    //TODO: temporary workround for insufficient memory by Renzhi //@longkun:start---
++    auto allocated_memory = _engine->get_used_device_memory(type);
++    if (type == allocation_type::usm_device &&
++        allocated_memory + layout.bytes_count() > _engine->get_device_info().max_global_mem_size) {
++        return nullptr;
++    }//@longkun:---end
++
+     auto mem = alloc_memory(layout, type);
+-    std::list<memory_record> list = {memory_record({{id, network_id}}, mem, network_id, type)};
++    std::list<memory_record> list = {memory_record({{id, network_id, layout.bytes_count(), 0}}, mem, network_id, type)}; //@longkun:
+     _padded_pool.emplace(layout, std::move(list));
+     return mem;
+ }
+@@ -200,10 +300,11 @@ memory::ptr memory_pool::get_from_across_networks_pool(const layout& layout,
+     auto it = _no_reusable_pool.lower_bound(layout.bytes_count());
+ 
+     while (it != _no_reusable_pool.end()) {
++        auto conflicts = get_conflicts(it->second._users, {}, network_id); //@longkun:
+         if (it->second._network_id != network_id &&
+             it->second._type == type) {  // don't use non reusable resources within the same network
+-            if (!has_conflict(it->second._users, {}, network_id)) {
+-                it->second._users.insert(memory_user(id, network_id));
++            if (conflicts.empty()) { //@longkun:start---
++                it->second._users.insert(memory_user(id, network_id, layout.bytes_count(), 0)); //@longkun:--end
+                 auto ret_mem = _engine->reinterpret_buffer(*it->second._memory, layout);
+                 return ret_mem;
+             }
+@@ -213,7 +314,7 @@ memory::ptr memory_pool::get_from_across_networks_pool(const layout& layout,
+     auto mem = alloc_memory(layout, type);
+     {
+         _no_reusable_pool.emplace(layout.bytes_count(),
+-                                  memory_record({{id, network_id}}, mem, network_id, type));
++                                memory_record({{id, network_id, layout.bytes_count(), 0}}, mem, network_id, type)); //@longkun:
+     }
+     return mem;
+ }
+diff --git a/src/plugins/intel_gpu/src/runtime/ocl/ocl_engine.cpp b/src/plugins/intel_gpu/src/runtime/ocl/ocl_engine.cpp
+index bf3ea87801..21109e605f 100644
+--- a/src/plugins/intel_gpu/src/runtime/ocl/ocl_engine.cpp
++++ b/src/plugins/intel_gpu/src/runtime/ocl/ocl_engine.cpp
+@@ -13,6 +13,8 @@
+ #include <set>
+ #include <stdexcept>
+ 
++#include "intel_gpu/runtime/debug_configuration.hpp" //@longkun:
++
+ // NOTE: Due to buggy scope transition of warnings we need to disable warning in place of use/instantation
+ //       of some types (even though we already disabled them in scope of definition of these types).
+ //       Moreover this warning is pretty much now only for annoyance: it is generated due to lack
+@@ -171,7 +173,7 @@ memory::ptr ocl_engine::allocate_memory(const layout& layout, allocation_type ty
+     }
+ }
+ 
+-memory::ptr ocl_engine::reinterpret_buffer(const memory& memory, const layout& new_layout) {
++memory::ptr ocl_engine::reinterpret_buffer(const memory& memory, const layout& new_layout, const size_t offset) { //@longkun:
+     OPENVINO_ASSERT(memory.get_engine() == this, "[GPU] trying to reinterpret buffer allocated by a different engine");
+     OPENVINO_ASSERT(new_layout.format.is_image() == memory.get_layout().format.is_image(),
+                     "[GPU] trying to reinterpret between image and non-image layouts. Current: ",
+@@ -179,15 +181,21 @@ memory::ptr ocl_engine::reinterpret_buffer(const memory& memory, const layout& n
+ 
+     try {
+         if (new_layout.format.is_image_2d()) {
++            //image2d buffer do not support resuse with none-zeron offset. //@longkun
++           assert(offset == 0); //@longkun
+            return std::make_shared<ocl::gpu_image2d>(this,
+                                      new_layout,
+                                      reinterpret_cast<const ocl::gpu_image2d&>(memory).get_buffer());
+         } else if (memory_capabilities::is_usm_type(memory.get_allocation_type())) {
++            auto& mem = reinterpret_cast<const ocl::gpu_usm&>(memory).get_buffer();//@longkun
++            cl::UsmMemory usm_mem(get_usm_helper(), (uint8_t*)mem.get() + offset); //@longkun
+             return std::make_shared<ocl::gpu_usm>(this,
+                                      new_layout,
+-                                     reinterpret_cast<const ocl::gpu_usm&>(memory).get_buffer(),
++                                     usm_mem, //@longkun:
+                                      memory.get_allocation_type());
+         } else {
++            //currently do not support reuse buffer with offset //@longkun
++           assert(offset == 0);//@longkun
+            return std::make_shared<ocl::gpu_buffer>(this,
+                                     new_layout,
+                                     reinterpret_cast<const ocl::gpu_buffer&>(memory).get_buffer());
+diff --git a/src/plugins/intel_gpu/src/runtime/ocl/ocl_engine.hpp b/src/plugins/intel_gpu/src/runtime/ocl/ocl_engine.hpp
+index 2999c1be15..7bf4e634ec 100644
+--- a/src/plugins/intel_gpu/src/runtime/ocl/ocl_engine.hpp
++++ b/src/plugins/intel_gpu/src/runtime/ocl/ocl_engine.hpp
+@@ -26,7 +26,7 @@ public:
+ 
+     memory_ptr allocate_memory(const layout& layout, allocation_type type, bool reset = true) override;
+     memory_ptr reinterpret_handle(const layout& new_layout, shared_mem_params params) override;
+-    memory_ptr reinterpret_buffer(const memory& memory, const layout& new_layout) override;
++    memory_ptr reinterpret_buffer(const memory& memory, const layout& new_layout, const size_t offset = 0) override; //@longkun
+     bool is_the_same_buffer(const memory& mem1, const memory& mem2) override;
+ 
+     void* get_user_context() const override;
+-- 
+2.25.1
+
