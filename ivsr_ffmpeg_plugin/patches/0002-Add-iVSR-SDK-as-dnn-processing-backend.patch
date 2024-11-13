@@ -1,0 +1,1283 @@
+From bde17e38dcb0b0d5ddf9673d48e57a9ac5928462 Mon Sep 17 00:00:00 2001
+From: ChengZhang <cheng.zhang@intel.com>
+Date: Thu, 14 Sep 2023 14:47:37 +0000
+Subject: [PATCH] Add iVSR SDK as dnn processing backend
+
+---
+ libavfilter/dnn/dnn_backend_common.c |   4 +-
+ libavfilter/dnn/dnn_backend_common.h |   2 +
+ libavfilter/dnn/dnn_backend_ivsr.c   | 855 ++++++++++++++++++++++++++-
+ libavfilter/dnn/dnn_backend_ivsr.h   |  20 +
+ libavfilter/dnn_filter_common.c      |  19 +
+ libavfilter/dnn_filter_common.h      |   7 +
+ libavfilter/dnn_interface.h          |   3 +
+ libavfilter/vf_dnn_processing.c      | 159 +++--
+ 8 files changed, 1025 insertions(+), 44 deletions(-)
+
+diff --git a/libavfilter/dnn/dnn_backend_common.c b/libavfilter/dnn/dnn_backend_common.c
+index 91a4a3c4bf..3c31d1b32c 100644
+--- a/libavfilter/dnn/dnn_backend_common.c
++++ b/libavfilter/dnn/dnn_backend_common.c
+@@ -66,6 +66,8 @@ int ff_dnn_fill_task(TaskItem *task, DNNExecBaseParams *exec_params, void *backe
+     task->input_name = exec_params->input_name;
+     task->in_frame = exec_params->in_frame;
+     task->out_frame = exec_params->out_frame;
++    task->in_queue = exec_params->in_queue;
++    task->out_queue = exec_params->out_queue;
+     task->model = backend_model;
+     task->nb_output = exec_params->nb_output;
+     task->output_names = exec_params->output_names;
+@@ -182,5 +184,5 @@ int ff_dnn_fill_gettingoutput_task(TaskItem *task, DNNExecBaseParams *exec_param
+     exec_params->in_frame = in_frame;
+     exec_params->out_frame = out_frame;
+ 
+-    return ff_dnn_fill_task(task, exec_params, backend_model, 0, 0);
++    return ff_dnn_fill_task(task, exec_params, backend_model, 1, 0);
+ }
+diff --git a/libavfilter/dnn/dnn_backend_common.h b/libavfilter/dnn/dnn_backend_common.h
+index 42c67c7040..bb184d7244 100644
+--- a/libavfilter/dnn/dnn_backend_common.h
++++ b/libavfilter/dnn/dnn_backend_common.h
+@@ -37,6 +37,8 @@ typedef struct TaskItem {
+     void *model; // model for the backend
+     AVFrame *in_frame;
+     AVFrame *out_frame;
++    AVFifo *in_queue;
++    AVFifo *out_queue;
+     const char *input_name;
+     const char **output_names;
+     uint8_t async;
+diff --git a/libavfilter/dnn/dnn_backend_ivsr.c b/libavfilter/dnn/dnn_backend_ivsr.c
+index 13327eab15..c08807920a 100644
+--- a/libavfilter/dnn/dnn_backend_ivsr.c
++++ b/libavfilter/dnn/dnn_backend_ivsr.c
+@@ -1,31 +1,870 @@
++/*
++ * Copyright (c) 2020
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
+ /**
+  * @file
+  * DNN iVSR SDK backend implementation.
+  */
+ 
+ #include "dnn_backend_ivsr.h"
++#include "dnn_io_proc.h"
++#include "libavformat/avio.h"
++#include "libavutil/avassert.h"
++#include "libavutil/cpu.h"
++#include "libavutil/opt.h"
++#include "libavutil/avstring.h"
++#include "../internal.h"
++#include "safe_queue.h"
++#include "libavutil/fifo.h"
++#include "ivsr.h"
++#include "dnn_backend_common.h"
++#include <string.h>
++
++typedef struct IVSROptions {
++    char *device_type;
++    int nireq;
++    uint8_t async;
++    int batch_size;
++    char *extension;
++    char *op_xml;
++} IVSROptions;
++
++typedef struct IVSRContext {
++    const AVClass *class;
++    IVSROptions options;
++} IVSRContext;
++
++typedef enum {
++    UNKNOWN_MODEL = -1,
++    BASICVSR
++} ModelType;
++
++typedef struct IVSRModel {
++    IVSRContext ctx;
++    DNNModel *model;
++    ivsr_config_t *config;
++    ivsr_handle handle;
++    SafeQueue *request_queue;
++    Queue *task_queue;
++    Queue *lltask_queue;
++    const char *all_input_names;
++    const char *all_output_names;
++    ModelType model_type;
++} IVSRModel;
++
++typedef struct IVSRRequestItem {
++    void *in_frames;
++    void *out_frames;
++    LastLevelTaskItem **lltasks;
++    uint32_t lltask_count;
++    ivsr_cb_t cb;
++} IVSRRequestItem;
+ 
+-DNNModel *ff_dnn_load_model_ivsr(const char *model_filename, DNNFunctionType func_type, const char *options, AVFilterContext *filter_ctx)
++#define OFFSET(x) offsetof(IVSRContext, x)
++#define FLAGS AV_OPT_FLAG_FILTERING_PARAM
++static const AVOption dnn_ivsr_options[] = {
++    { "device", "device to run model, must choose one from CPU or GPU", OFFSET(options.device_type), AV_OPT_TYPE_STRING, { .str = "CPU" }, 0, 0, FLAGS },
++    DNN_BACKEND_COMMON_OPTIONS
++    { "batch_size",  "batch size per request, NOT usable for BasicVSR model", OFFSET(options.batch_size),  AV_OPT_TYPE_INT,    { .i64 = 1 },     1, 1000, FLAGS},
++    { "extension",  "extension lib file full path, NOT usable for BasicVSR model", OFFSET(options.extension),  AV_OPT_TYPE_STRING,    { .str = "../../../ivsr_gpu_opt/based_on_openvino_2022.3/openvino/bin/intel64/Release/libcustom_extension.so" },     0, 0, FLAGS},
++    { "op_xml",  "custom op xml file full path, NOT usable for BasicVSR model", OFFSET(options.op_xml),  AV_OPT_TYPE_STRING,    { .str = "../../../ivsr_gpu_opt/based_on_openvino_2022.3/openvino/flow_warp_cl_kernel/flow_warp.xml" },     0, 0, FLAGS},
++    { NULL }
++};
++
++AVFILTER_DEFINE_CLASS(dnn_ivsr);
++
++static int get_datatype_size(DNNDataType dt)
+ {
+-    return NULL;
++    switch (dt) {
++    case DNN_FLOAT:
++        return sizeof(float);
++    case DNN_UINT8:
++        return sizeof(uint8_t);
++    default:
++        av_assert0(!"not supported yet.");
++        return 1;
++    }
+ }
+ 
+-int ff_dnn_execute_model_ivsr(const DNNModel *model, DNNExecBaseParams *exec_params)
++static int fill_model_input_ivsr(IVSRModel * ivsr_model,
++                                 IVSRRequestItem * request)
+ {
++    IVSRContext *ctx = &ivsr_model->ctx;
++    IVSRStatus status;
++    DNNData input;
++    LastLevelTaskItem *lltask;
++    TaskItem *task;
++    AVFrame *tmp_frame = NULL;
++    void *in_data = NULL;
++    void *in_in_packed = NULL;
++    int dims[5] = { 0, 0, 0, 0, 0 };
++
++    lltask = ff_queue_peek_front(ivsr_model->lltask_queue);
++    av_assert0(lltask);
++    task = lltask->task;
++
++    status = ivsr_get_attr(ivsr_model->handle, INPUT_TENSOR_DESC, dims);
++    if (status != OK) {
++        av_log(ctx, AV_LOG_ERROR, "Failed to get input dimensions\n");
++        return DNN_GENERIC_ERROR;
++    }
++
++    if (ivsr_model->model_type == BASICVSR) {
++        input.channels = dims[1];
++        input.height = dims[3];
++        input.width = dims[4];
++        input.dt = DNN_FLOAT;
++    } else {
++        av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
++        return DNN_GENERIC_ERROR;
++    }
++
++    input.data = request->in_frames;
++    input.order = DCO_BGR;
++    in_data = input.data;
++
++    in_in_packed =
++        av_malloc(input.height * input.width * input.channels *
++                  sizeof(float));
++    if (!in_in_packed)
++        return AVERROR(ENOMEM);
++
++    for (int i = 0; i < ctx->options.batch_size; ++i) {
++        lltask = ff_queue_pop_front(ivsr_model->lltask_queue);
++        if (!lltask) {
++            break;
++        }
++        request->lltasks[i] = lltask;
++        request->lltask_count = i + 1;
++        task = lltask->task;
++        if (task->do_ioproc) {
++            if (ivsr_model->model->frame_pre_proc != NULL) {
++                ivsr_model->model->frame_pre_proc(task->in_frame, &input,
++                                                  ivsr_model->model->
++                                                  filter_ctx);
++            } else {
++                if (ivsr_model->model_type == BASICVSR && dims[2] != 1) {
++                    int read_frame_num = 0;
++                    for (int j = 0; j < dims[2]; j++) {
++                        if (av_fifo_can_read(task->in_queue)) {
++                            av_fifo_read(task->in_queue, &tmp_frame, 1);
++                            ff_proc_from_frame_to_dnn(tmp_frame, &input,
++                                                      ivsr_model->model->
++                                                      filter_ctx);
++                            memcpy((uint8_t *) in_in_packed,
++                                   (uint8_t *) input.data,
++                                   input.height * input.width *
++                                   input.channels * sizeof(float));
++                            for (int pos = 0;
++                                 pos < input.height * input.width; pos++) {
++                                for (int ch = 0; ch < input.channels; ch++) {
++                                    ((float *)
++                                     input.data)[(ch * input.height *
++                                                  input.width + pos)] =
++                                        ((float *)
++                                         in_in_packed)[(pos *
++                                                        input.channels +
++                                                        (input.channels -
++                                                         1 - ch))];
++                                }
++                            }
++                            input.data +=
++                                input.height * input.width *
++                                input.channels * sizeof(float);
++                            read_frame_num++;
++                        }
++                    }
++                    input.data = in_data;
++                    if (read_frame_num < dims[2])
++                        av_log(ctx, AV_LOG_ERROR,
++                               "Read frame number is %d less than the model requirement!!!\n",
++                               read_frame_num);
++                } else {
++                    ff_proc_from_frame_to_dnn(task->in_frame, &input,
++                                              ivsr_model->model->
++                                              filter_ctx);
++                }
++            }
++        }
++        input.data =
++            (uint8_t *) input.data +
++            input.width * input.height * input.channels *
++            get_datatype_size(input.dt);
++    }
++    if (in_in_packed)
++        av_free(in_in_packed);
+     return 0;
+ }
+ 
+-DNNAsyncStatusType ff_dnn_get_result_ivsr(const DNNModel *model, AVFrame **in, AVFrame **out)
++static void infer_completion_callback(void *args)
+ {
+-    return DAST_SUCCESS;
++    IVSRStatus status;
++    IVSRRequestItem *request = args;
++    LastLevelTaskItem *lltask = request->lltasks[0];
++    TaskItem *task = lltask->task;
++    IVSRModel *ivsr_model = task->model;
++    SafeQueue *requestq = ivsr_model->request_queue;
++    DNNData output;
++    IVSRContext *ctx = &ivsr_model->ctx;
++    AVFrame *tmp_frame = NULL;
++    void *out_in_planar = NULL;
++    int offset = 0;
++    int dims[5] = { 0, 0, 0, 0, 0 };
++
++    status = ivsr_get_attr(ivsr_model->handle, OUTPUT_TENSOR_DESC, dims);
++    if (status != OK) {
++        av_log(ctx, AV_LOG_ERROR, "Failed to get output dimensions\n");
++        return;
++    }
++
++    if (ivsr_model->model_type == BASICVSR) {
++        output.channels = dims[1];
++        output.height = dims[3];
++        output.width = dims[4];
++    } else {
++        av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
++        return;
++    }
++    output.dt = DNN_FLOAT;
++    output.data = request->out_frames;
++
++    out_in_planar =
++        av_malloc(output.height * output.width * output.channels *
++                  sizeof(float));
++    if (!out_in_planar) {
++        av_log(ctx, AV_LOG_ERROR,
++               "Failed to allocate array with %ld bytes!\n",
++               output.height * output.width * output.channels *
++               sizeof(float));
++        return;
++    }
++
++    av_assert0(request->lltask_count <= dims[0]);
++    av_assert0(request->lltask_count >= 1);
++    for (int i = 0; i < request->lltask_count; ++i) {
++        task = request->lltasks[i]->task;
++        task->inference_done++;
++
++        if (task->do_ioproc) {
++            if (ivsr_model->model->frame_post_proc != NULL) {
++                ivsr_model->model->frame_post_proc(task->out_frame,
++                                                   &output,
++                                                   ivsr_model->model->
++                                                   filter_ctx);
++            } else {
++                if (ivsr_model->model_type == BASICVSR && dims[2] != 1) {
++                    do {
++                        int ret =
++                            av_fifo_peek(task->out_queue, &tmp_frame, 1,
++                                         offset);
++                        if (ret == 0) {
++                            memcpy((uint8_t *) out_in_planar,
++                                   (uint8_t *) output.data,
++                                   output.height * output.width *
++                                   output.channels * sizeof(float));
++                            for (int pos = 0;
++                                 pos < output.height * output.width;
++                                 pos++) {
++                                for (int ch = 0; ch < output.channels;
++                                     ch++) {
++                                    ((float *)
++                                     output.data)[(pos * output.channels +
++                                                   ch)] = ((float *)
++                                                           out_in_planar)[((output.channels - 1 - ch) * output.height * output.width + pos)];
++                                }
++                            }
++                            ff_proc_from_dnn_to_frame(tmp_frame, &output,
++                                                      &ivsr_model->model->
++                                                      filter_ctx);
++                            output.data +=
++                                output.height * output.width *
++                                output.channels * sizeof(float);
++                        }
++                        offset++;
++                    } while (offset != dims[2]);
++                    task->out_frame = NULL;
++                } else {
++                    ff_proc_from_dnn_to_frame(task->out_frame, &output,
++                                              &ivsr_model->model->
++                                              filter_ctx);
++                }
++            }
++        } else {
++            task->out_frame->width = output.width;
++            task->out_frame->height = output.height;
++        }
++
++        av_freep(&request->lltasks[i]);
++        output.data =
++            (uint8_t *) output.data +
++            output.width * output.height * output.channels *
++            get_datatype_size(output.dt);
++    }
++    if (out_in_planar)
++        av_free(out_in_planar);
++
++    request->lltask_count = 0;
++    if (ff_safe_queue_push_back(requestq, request) < 0) {
++        av_freep(&request->in_frames);
++        av_freep(&request->out_frames);
++        av_freep(&request);
++        av_log(ctx, AV_LOG_ERROR, "Failed to push back request_queue.\n");
++        return;
++    }
++}
++
++static int get_input_ivsr(void *model, DNNData * input,
++                          const char *input_name)
++{
++    IVSRModel *ivsr_model = model;
++    IVSRContext *ctx = &ivsr_model->ctx;
++    IVSRStatus status;
++    int dims[5] = { 0, 0, 0, 0, 0 };
++
++    status = ivsr_get_attr(ivsr_model->handle, INPUT_TENSOR_DESC, dims);
++    if (status != OK) {
++        av_log(ctx, AV_LOG_ERROR, "Failed to get input dimensions\n");
++        return DNN_GENERIC_ERROR;
++    }
++
++    if (ivsr_model->model_type == BASICVSR) {
++        input->channels = dims[1];
++        input->height = dims[3];
++        input->width = dims[4];
++        input->dt = DNN_FLOAT;
++    } else {
++        av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
++        return DNN_GENERIC_ERROR;
++    }
++
++    return 0;
+ }
+ 
+-int ff_dnn_flush_ivsr(const DNNModel *model)
++static int extract_lltask_from_task(TaskItem * task, Queue * lltask_queue,
++                                    DNNExecBaseParams * exec_params)
+ {
++
++    LastLevelTaskItem *lltask = av_malloc(sizeof(*lltask));
++    if (!lltask) {
++        return AVERROR(ENOMEM);
++    }
++    task->inference_todo = 1;
++    task->inference_done = 0;
++    lltask->task = task;
++    if (ff_queue_push_back(lltask_queue, lltask) < 0) {
++        av_freep(&lltask);
++        return AVERROR(ENOMEM);
++    }
+     return 0;
+ }
+ 
+-void ff_dnn_free_model_ivsr(DNNModel **model)
++static int execute_model_ivsr(IVSRRequestItem * request,
++                              Queue * inferenceq)
++{
++    IVSRStatus status;
++    LastLevelTaskItem *lltask = NULL;
++    int ret = 0;
++    TaskItem *task = NULL;
++    IVSRContext *ctx = NULL;
++    IVSRModel *ivsr_model = NULL;
++    int input_size[5] = { 0, 0, 0, 0, 0 };
++
++    if (ff_queue_size(inferenceq) == 0) {
++        av_freep(&request->in_frames);
++        av_freep(&request->out_frames);
++        av_freep(&request);
++        return 0;
++    }
++
++    lltask = ff_queue_peek_front(inferenceq);
++    task = lltask->task;
++    ivsr_model = task->model;
++    ctx = &ivsr_model->ctx;
++
++    status =
++        ivsr_get_attr(ivsr_model->handle, INPUT_TENSOR_DESC, input_size);
++    if (status != OK) {
++        av_log(ctx, AV_LOG_ERROR, "Failed to get input dimensions\n");
++        ret = DNN_GENERIC_ERROR;
++        goto err;
++    }
++
++    if (task->async) {
++        ret = fill_model_input_ivsr(ivsr_model, request);
++        if (ret != 0) {
++            goto err;
++        }
++        status =
++            ivsr_process(ivsr_model->handle, request->in_frames,
++                         request->out_frames, input_size, &request->cb);
++        if (status != OK) {
++            av_log(ctx, AV_LOG_ERROR,
++                   "Failed to process the inference on input data seq\n");
++            ret = DNN_GENERIC_ERROR;
++            goto err;
++        }
++        return 0;
++    } else {
++        av_log(ctx, AV_LOG_WARNING, "Not supported sync mode.\n");
++    }
++
++  err:
++    if (ff_safe_queue_push_back(ivsr_model->request_queue, request) < 0) {
++        av_freep(&request->in_frames);
++        av_freep(&request->out_frames);
++        av_freep(&request);
++    }
++    return ret;
++}
++
++static int get_output_ivsr(void *model, const char *input_name,
++                           int input_width, int input_height,
++                           const char *output_name, int *output_width,
++                           int *output_height)
+ {
++    int ret;
++    IVSRModel *ivsr_model = model;
++    IVSRContext *ctx = &ivsr_model->ctx;
++    IVSRStatus status;
++    TaskItem *task;
++    IVSRRequestItem *request;
++    DNNExecBaseParams exec_params = {
++        .input_name = NULL,
++        .output_names = NULL,
++        .nb_output = 1,
++        .in_frame = NULL,
++        .out_frame = NULL,
++    };
++    int dims[5] = { 0, 0, 0, 0, 0 };
++
++    status = ivsr_get_attr(ivsr_model->handle, OUTPUT_TENSOR_DESC, dims);
++    if (status != OK) {
++        av_log(ctx, AV_LOG_ERROR, "Failed to get output dimensions\n");
++        return DNN_GENERIC_ERROR;
++    }
++
++    task = av_malloc(sizeof(*task));
++    ret =
++        ff_dnn_fill_gettingoutput_task(task, &exec_params, ivsr_model,
++                                       input_height, input_width, ctx);
++    if (ret != 0) {
++        goto err;
++    }
++
++    ret = extract_lltask_from_task(task, ivsr_model->lltask_queue, NULL);
++    if (ret != 0) {
++        av_log(ctx, AV_LOG_ERROR,
++               "unable to extract inference from task.\n");
++        goto err;
++    }
++
++    request = ff_safe_queue_pop_front(ivsr_model->request_queue);
++    if (!request) {
++        av_log(ctx, AV_LOG_ERROR, "unable to get infer request.\n");
++        ret = AVERROR(EINVAL);
++        goto err;
++    }
++
++    if (ivsr_model->model_type == BASICVSR) {
++        *output_height = dims[3];
++        *output_width = dims[4];
++    } else {
++        av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
++        ret = DNN_GENERIC_ERROR;
++        goto err;
++    }
++
++    ret = execute_model_ivsr(request, ivsr_model->lltask_queue);
++
++    return ret;
++  err:
++    av_frame_free(&task->out_frame);
++    av_frame_free(&task->in_frame);
++    av_freep(&task);
++    return ret;
++}
++
++DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
++                                 DNNFunctionType func_type,
++                                 const char *options,
++                                 AVFilterContext * filter_ctx)
++{
++    DNNModel *model = NULL;
++    IVSRModel *ivsr_model = NULL;
++    IVSRContext *ctx = NULL;
++    IVSRStatus status;
++    ivsr_config_t *config = NULL;
++    ivsr_config_t *config_device = NULL;
++    ivsr_config_t *config_customlib = NULL;
++    ivsr_config_t *config_cldnn = NULL;
++    int nif = 0;
++    int input_dims[5] = { 0, 0, 0, 0, 0 };
++    int output_dims[5] = { 0, 0, 0, 0, 0 };
++
++    model = av_mallocz(sizeof(DNNModel));
++    if (!model) {
++        return NULL;
++    }
++
++    ivsr_model = av_mallocz(sizeof(IVSRModel));
++    if (!ivsr_model) {
++        av_freep(&model);
++        return NULL;
++    }
++
++    model->model = ivsr_model;
++    ivsr_model->model = model;
++    ivsr_model->ctx.class = &dnn_ivsr_class;
++    ctx = &ivsr_model->ctx;
++    ivsr_model->all_input_names = NULL;
++    ivsr_model->all_output_names = NULL;
++
++    // Only BASICVSR now
++    ivsr_model->model_type = BASICVSR;
++
++    // parse options
++    av_opt_set_defaults(ctx);
++    if (av_opt_set_from_string(ctx, options, NULL, "=", "&") < 0) {
++        av_log(ctx, AV_LOG_ERROR, "Failed to parse options \"%s\"\n",
++               options);
++        goto err;
++    }
++
++    if (ctx->options.batch_size <= 0 || ctx->options.batch_size > 1) {
++        av_log(ctx, AV_LOG_WARNING, "Set batch size to 1.\n");
++        ctx->options.batch_size = 1;
++    }
++    // create infer_requests for async execution
++    if (ctx->options.nireq <= 0) {
++        // the default value is a rough estimation
++        ctx->options.nireq = av_cpu_count() / 2 + 1;
++    }
++    // set ivsr config
++    // input model
++    ivsr_model->config = av_mallocz(sizeof(ivsr_config_t));
++    config = ivsr_model->config;
++    if (config == NULL) {
++        av_log(ctx, AV_LOG_ERROR, "Failed to malloc config\n");
++        goto err;
++    }
++    config->key = INPUT_MODEL;
++    config->value = model_filename;
++    config->next = NULL;
++
++    // target device
++    config_device = av_mallocz(sizeof(ivsr_config_t));
++    if (config_device == NULL) {
++        av_log(ctx, AV_LOG_ERROR, "Failed to malloc device config\n");
++        goto err;
++    }
++    config_device->key = TARGET_DEVICE;
++    config_device->value = ctx->options.device_type;
++    config_device->next = NULL;
++    config->next = config_device;
++
++    // extension
++    config_customlib = av_mallocz(sizeof(ivsr_config_t));
++    if (config_customlib == NULL) {
++        av_log(ctx, AV_LOG_ERROR, "Failed to malloc customlib config\n");
++        goto err;
++    }
++    config_customlib->key = CUSTOM_LIB;
++    config_customlib->value = ctx->options.extension;
++    config_customlib->next = NULL;
++    config_device->next = config_customlib;
++
++    // cldnn
++    config_cldnn = av_mallocz(sizeof(ivsr_config_t));
++    if (config_cldnn == NULL) {
++        av_log(ctx, AV_LOG_ERROR, "Failed to malloc cldnn config\n");
++        goto err;
++    }
++    config_cldnn->key = CLDNN_CONFIG;
++    config_cldnn->value = ctx->options.op_xml;
++    config_cldnn->next = NULL;
++    config_customlib->next = config_cldnn;
++
++    // initialize ivsr
++    status = ivsr_init(config, &ivsr_model->handle);
++    if (status != OK) {
++        av_log(ctx, AV_LOG_ERROR, "Failed to initialize ivsr engine\n");
++        goto err;
++    }
++
++    status = ivsr_get_attr(ivsr_model->handle, NUM_INPUT_FRAMES, &nif);
++    if (status != OK) {
++        av_log(ctx, AV_LOG_ERROR, "Failed to get nif\n");
++        goto err;
++    }
++    filter_ctx->nb_inputs = nif;
++
++    status =
++        ivsr_get_attr(ivsr_model->handle, INPUT_TENSOR_DESC, input_dims);
++    if (status != OK) {
++        av_log(ctx, AV_LOG_ERROR, "Failed to get input dimensions\n");
++        goto err;
++    }
++
++    status =
++        ivsr_get_attr(ivsr_model->handle, OUTPUT_TENSOR_DESC, output_dims);
++    if (status != OK) {
++        av_log(ctx, AV_LOG_ERROR, "Failed to get output dimensions\n");
++        goto err;
++    }
++
++
++    ivsr_model->request_queue = ff_safe_queue_create();
++    if (!ivsr_model->request_queue) {
++        av_log(ctx, AV_LOG_ERROR, "Failed to create request queue\n");
++        goto err;
++    }
++
++    for (int i = 0; i < ctx->options.nireq; i++) {
++        IVSRRequestItem *item = av_mallocz(sizeof(*item));
++        if (!item) {
++            av_log(ctx, AV_LOG_ERROR,
++                   "Failed to malloc IVSR request item\n");
++            goto err;
++        }
++
++        item->in_frames =
++            av_malloc(input_dims[0] * input_dims[1] * input_dims[2] *
++                      input_dims[3] * input_dims[4] * sizeof(float));
++        if (!item->in_frames) {
++            av_log(ctx, AV_LOG_ERROR, "Failed to malloc in frames\n");
++            goto err;
++        }
++
++        item->out_frames =
++            av_malloc(output_dims[0] * output_dims[1] * output_dims[2] *
++                      output_dims[3] * output_dims[4] * sizeof(float));
++        if (!item->out_frames) {
++            av_log(ctx, AV_LOG_ERROR, "Failed to malloc out frames\n");
++            goto err;
++        }
++
++        item->cb.ivsr_cb = infer_completion_callback;
++        item->cb.args = item;
++        if (ff_safe_queue_push_back(ivsr_model->request_queue, item) < 0) {
++            av_freep(&item->in_frames);
++            av_freep(&item->out_frames);
++            av_freep(&item);
++            goto err;
++        }
++
++        item->lltasks =
++            av_malloc_array(ctx->options.batch_size,
++                            sizeof(*item->lltasks));
++        if (!item->lltasks) {
++            av_log(ctx, AV_LOG_ERROR, "Failed to malloc lltasks\n");
++            goto err;
++        }
++        item->lltask_count = 0;
++    }
++
++    ivsr_model->task_queue = ff_queue_create();
++    if (!ivsr_model->task_queue) {
++        av_log(ctx, AV_LOG_ERROR, "Failed to malloc lltasks\n");
++        goto err;
++    }
++
++    ivsr_model->lltask_queue = ff_queue_create();
++    if (!ivsr_model->lltask_queue) {
++        av_log(ctx, AV_LOG_ERROR, "Failed to malloc lltask queue\n");
++        goto err;
++    }
++
++    model->get_input = &get_input_ivsr;
++    model->get_output = &get_output_ivsr;
++    model->options = options;
++    model->filter_ctx = filter_ctx;
++    model->func_type = func_type;
++
++    return model;
++  err:
++    ff_dnn_free_model_ivsr(&model);
++    return NULL;
++}
++
++int ff_dnn_execute_model_ivsr(const DNNModel * model,
++                              DNNExecBaseParams * exec_params)
++{
++    IVSRModel *ivsr_model = model->model;
++    IVSRContext *ctx = &ivsr_model->ctx;
++    IVSRRequestItem *request;
++    TaskItem *task;
++    int ret = 0;
++
++    ret =
++        ff_check_exec_params(ctx, DNN_IVSR, model->func_type, exec_params);
++    if (ret != 0) {
++        return ret;
++    }
++
++    task = av_malloc(sizeof(*task));
++    if (!task) {
++        av_log(ctx, AV_LOG_ERROR,
++               "unable to alloc memory for task item.\n");
++        return AVERROR(ENOMEM);
++    }
++
++    ret =
++        ff_dnn_fill_task(task, exec_params, ivsr_model, ctx->options.async,
++                         1);
++    if (ret != 0) {
++        av_freep(&task);
++        return ret;
++    }
++
++    if (ff_queue_push_back(ivsr_model->task_queue, task) < 0) {
++        av_freep(&task);
++        av_log(ctx, AV_LOG_ERROR, "unable to push back task_queue.\n");
++        return AVERROR(ENOMEM);
++    }
++
++    ret =
++        extract_lltask_from_task(task, ivsr_model->lltask_queue,
++                                 exec_params);
++    if (ret != 0) {
++        av_log(ctx, AV_LOG_ERROR,
++               "unable to extract inference from task.\n");
++        return ret;
++    }
++
++    if (ctx->options.async) {
++        while (ff_queue_size(ivsr_model->lltask_queue) >=
++               ctx->options.batch_size) {
++            request = ff_safe_queue_pop_front(ivsr_model->request_queue);
++            if (!request) {
++                av_log(ctx, AV_LOG_ERROR,
++                       "unable to get infer request.\n");
++                return AVERROR(EINVAL);
++            }
++
++            ret = execute_model_ivsr(request, ivsr_model->lltask_queue);
++            if (ret != 0) {
++                return ret;
++            }
++        }
++
++        return 0;
++    }
++
++    av_log(ctx, AV_LOG_WARNING, "Not supported sync mode.\n");
++    return AVERROR(EINVAL);
++}
++
++DNNAsyncStatusType ff_dnn_get_result_ivsr(const DNNModel * model,
++                                          AVFrame ** in, AVFrame ** out)
++{
++    IVSRModel *ivsr_model = model->model;
++    return ff_dnn_get_result_common(ivsr_model->task_queue, in, out);
++}
++
++int ff_dnn_flush_ivsr(const DNNModel * model)
++{
++    IVSRModel *ivsr_model = model->model;
++    IVSRContext *ctx = &ivsr_model->ctx;
++    IVSRRequestItem *request;
++    IVSRStatus status;
++    int ret;
++    int input_size[] = { 0, 0, 0, 0, 0 };
++
++    if (ff_queue_size(ivsr_model->lltask_queue) == 0) {
++        // no pending task need to flush
++        return 0;
++    }
++
++    status =
++        ivsr_get_attr(ivsr_model->handle, INPUT_TENSOR_DESC, input_size);
++    if (status != OK) {
++        av_log(ctx, AV_LOG_ERROR, "Failed to get input dimensions\n");
++        return AVERROR(EINVAL);
++    }
++
++    request = ff_safe_queue_pop_front(ivsr_model->request_queue);
++    if (!request) {
++        av_log(ctx, AV_LOG_ERROR, "unable to get infer request.\n");
++        return AVERROR(EINVAL);
++    }
++
++    ret = fill_model_input_ivsr(ivsr_model, request);
++    if (ret != 0) {
++        av_log(ctx, AV_LOG_ERROR, "Failed to fill model input.\n");
++        return ret;
++    }
++
++    status =
++        ivsr_process(ivsr_model->handle, request->in_frames,
++                     request->out_frames, input_size, &request->cb);
++    if (status != OK) {
++        av_log(ctx, AV_LOG_ERROR,
++               "Failed to process the inference on input data seq\n");
++        ret = DNN_GENERIC_ERROR;
++    }
++
++    return 0;
++}
++
++void ff_dnn_free_model_ivsr(DNNModel ** model)
++{
++    if (*model) {
++        IVSRModel *ivsr_model = (*model)->model;
++        ivsr_handle handle = ivsr_model->handle;
++        ivsr_config_t *config = ivsr_model->config;
++        IVSRContext *ctx = &ivsr_model->ctx;
++        IVSRStatus status;
++
++        while (ff_safe_queue_size(ivsr_model->request_queue) != 0) {
++            IVSRRequestItem *item =
++                ff_safe_queue_pop_front(ivsr_model->request_queue);
++            av_freep(&item->in_frames);
++            av_freep(&item->out_frames);
++            av_freep(&item->lltasks);
++            av_freep(&item);
++        }
++        ff_safe_queue_destroy(ivsr_model->request_queue);
++
++        while (ff_queue_size(ivsr_model->lltask_queue) != 0) {
++            LastLevelTaskItem *item =
++                ff_queue_pop_front(ivsr_model->lltask_queue);
++            av_freep(&item);
++        }
++        ff_queue_destroy(ivsr_model->lltask_queue);
++
++        while (ff_queue_size(ivsr_model->task_queue) != 0) {
++            TaskItem *item = ff_queue_pop_front(ivsr_model->task_queue);
++            av_freep(&item);
++        }
++        ff_queue_destroy(ivsr_model->task_queue);
++
++        status = ivsr_deinit(handle);
++        if (status != OK) {
++            av_log(ctx, AV_LOG_ERROR, "Failed to release ivsr engine\n");
++        }
++        while (config != NULL) {
++            ivsr_config_t *next = config->next;
++            av_free(config);
++            config = next;
++        }
++        av_freep(&handle);
++    }
+     return;
+ }
+ 
+ const DNNModule ff_dnn_backend_ivsr = {
+diff --git a/libavfilter/dnn/dnn_backend_ivsr.h b/libavfilter/dnn/dnn_backend_ivsr.h
+index 3ace47b7ac..8c57d29c32 100644
+--- a/libavfilter/dnn/dnn_backend_ivsr.h
++++ b/libavfilter/dnn/dnn_backend_ivsr.h
+@@ -1,3 +1,23 @@
++/*
++ * Copyright (c) 2020
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
+ /**
+  * @file
+  * DNN inference functions interface for iVSR SDK backend.
+diff --git a/libavfilter/dnn_filter_common.c b/libavfilter/dnn_filter_common.c
+index 5083e3de19..043f7fd075 100644
+--- a/libavfilter/dnn_filter_common.c
++++ b/libavfilter/dnn_filter_common.c
+@@ -79,6 +79,15 @@ int ff_dnn_init(DnnContext *ctx, DNNFunctionType func_type, AVFilterContext *fil
+     }
+ 
+     ctx->model = (ctx->dnn_module->load_model)(ctx->model_filename, func_type, ctx->backend_options, filter_ctx);
++    
++    if (filter_ctx->nb_inputs != ctx->nif) {
++        av_log(filter_ctx, AV_LOG_WARNING, "nif is different to the model requirement, use model setting!\n");
++        ctx->nif = filter_ctx->nb_inputs;
++        filter_ctx->nb_inputs = 1;
++    } else {
++        filter_ctx->nb_inputs = 1;
++    }
++    
+     if (!ctx->model) {
+         av_log(filter_ctx, AV_LOG_ERROR, "could not load DNN model\n");
+         return AVERROR(EINVAL);
+@@ -125,6 +134,8 @@ int ff_dnn_execute_model(DnnContext *ctx, AVFrame *in_frame, AVFrame *out_frame)
+         .nb_output      = ctx->nb_outputs,
+         .in_frame       = in_frame,
+         .out_frame      = out_frame,
++        .in_queue       = (AVFifo*)ctx->in_queue,
++        .out_queue       = (AVFifo*)ctx->out_queue,
+     };
+     return (ctx->dnn_module->execute_model)(ctx->model, &exec_params);
+ }
+@@ -159,6 +171,14 @@ void ff_dnn_uninit(DnnContext *ctx)
+     if (ctx->dnn_module) {
+         (ctx->dnn_module->free_model)(&ctx->model);
+     }
++
++    if (ctx->in_queue) {
++        av_fifo_freep2(&ctx->in_queue);
++    }
++
++    if (ctx->out_queue) {
++        av_fifo_freep2(&ctx->out_queue);
++    }
+     if (ctx->model_outputnames) {
+         for (int i = 0; i < ctx->nb_outputs; i++)
+             av_free(ctx->model_outputnames[i]);
+diff --git a/libavfilter/dnn_filter_common.h b/libavfilter/dnn_filter_common.h
+index bcdf37c815..e5d89fee7d 100644
+--- a/libavfilter/dnn_filter_common.h
++++ b/libavfilter/dnn_filter_common.h
+@@ -38,6 +38,13 @@ typedef struct DnnContext {
+     uint32_t nb_outputs;
+     const DNNModule *dnn_module;
+     DNNModel *model;
++    AVFifo *in_queue;
++    AVFifo *out_queue;
++    int nif;
++    int input_width;
++    int input_height;
++    int output_width;
++    int output_height;
+ } DnnContext;
+ 
+ #define DNN_COMMON_OPTIONS \
+diff --git a/libavfilter/dnn_interface.h b/libavfilter/dnn_interface.h
+index 0e96562da2..55785e6634 100644
+--- a/libavfilter/dnn_interface.h
++++ b/libavfilter/dnn_interface.h
+@@ -28,6 +28,7 @@
+ 
+ #include <stdint.h>
+ #include "libavutil/frame.h"
++#include "libavutil/fifo.h"
+ #include "avfilter.h"
+ 
+ #define DNN_GENERIC_ERROR FFERRTAG('D','N','N','!')
+@@ -70,6 +71,8 @@ typedef struct DNNExecBaseParams {
+     uint32_t nb_output;
+     AVFrame *in_frame;
+     AVFrame *out_frame;
++    AVFifo *in_queue;
++    AVFifo *out_queue;
+ } DNNExecBaseParams;
+ 
+ typedef struct DNNExecClassificationParams {
+diff --git a/libavfilter/vf_dnn_processing.c b/libavfilter/vf_dnn_processing.c
+index cac096a19f..f33d281fe1 100644
+--- a/libavfilter/vf_dnn_processing.c
++++ b/libavfilter/vf_dnn_processing.c
+@@ -27,6 +27,7 @@
+ #include "libavutil/pixdesc.h"
+ #include "libavutil/avassert.h"
+ #include "libavutil/imgutils.h"
++#include "libavutil/fifo.h"
+ #include "filters.h"
+ #include "dnn_filter_common.h"
+ #include "internal.h"
+@@ -50,26 +51,47 @@ static const AVOption dnn_processing_options[] = {
+ #endif
+ #if (CONFIG_LIBOPENVINO == 1)
+     { "openvino",    "openvino backend flag",      0,                        AV_OPT_TYPE_CONST,     { .i64 = DNN_OV },    0, 0, FLAGS, "backend" },
++#endif
++#if (CONFIG_LIBIVSR == 1)
++    { "ivsr",        "ivsr flag",                  0,                        AV_OPT_TYPE_CONST,     { .i64 = DNN_IVSR },    0, 0, FLAGS, "backend" },
+ #endif
+     DNN_COMMON_OPTIONS
++    { "nif",         "number of input frames, NOT usable for BasicVSR model",     OFFSET(nif),              AV_OPT_TYPE_INT,       { .i64 = 3 },    1,      INT_MAX, FLAGS },
++    { "input_width", "input video width",     OFFSET(input_width),              AV_OPT_TYPE_INT,       { .i64 = 1920 },    1, INT_MAX, FLAGS },
++    { "input_height","input video height",     OFFSET(input_height),              AV_OPT_TYPE_INT,       { .i64 = 1080 },    1, INT_MAX, FLAGS },
++    { "output_width","output video width, NOT usable for BasicVSR model",     OFFSET(output_width),              AV_OPT_TYPE_INT,       { .i64 = 3840 },    1, INT_MAX, FLAGS },
++    { "output_height", "output video height, NOT usable for BasicVSR model'",     OFFSET(output_height),              AV_OPT_TYPE_INT,       { .i64 = 2160 },    1, INT_MAX, FLAGS },
+     { NULL }
+ };
+ 
+ AVFILTER_DEFINE_CLASS(dnn_processing);
+ 
++#define MAX_PROCESSING_QUEUE 48
++
+ static av_cold int init(AVFilterContext *context)
+ {
+     DnnProcessingContext *ctx = context->priv;
++    ctx->dnnctx.in_queue = av_fifo_alloc2(MAX_PROCESSING_QUEUE, sizeof(AVFrame *), AV_FIFO_FLAG_AUTO_GROW);
++    if (!ctx->dnnctx.in_queue)
++        return AVERROR(ENOMEM);
++    ctx->dnnctx.out_queue = av_fifo_alloc2(MAX_PROCESSING_QUEUE, sizeof(AVFrame *), AV_FIFO_FLAG_AUTO_GROW);
++    if (!ctx->dnnctx.out_queue)
++        return AVERROR(ENOMEM);
+     return ff_dnn_init(&ctx->dnnctx, DFT_PROCESS_FRAME, context);
+ }
+ 
+ static const enum AVPixelFormat pix_fmts[] = {
++#if 0
+     AV_PIX_FMT_RGB24, AV_PIX_FMT_BGR24,
+     AV_PIX_FMT_GRAY8, AV_PIX_FMT_GRAYF32,
+     AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUV422P,
+     AV_PIX_FMT_YUV444P, AV_PIX_FMT_YUV410P, AV_PIX_FMT_YUV411P,
+     AV_PIX_FMT_NV12,
+     AV_PIX_FMT_NONE
++#else
++    AV_PIX_FMT_BGR24,
++    AV_PIX_FMT_NONE
++#endif
+ };
+ 
+ #define LOG_FORMAT_CHANNEL_MISMATCH()                       \
+@@ -144,6 +166,10 @@ static int config_input(AVFilterLink *inlink)
+         return result;
+     }
+ 
++    if ((ctx->dnnctx.input_width != model_input.width) || (ctx->dnnctx.input_height != model_input.height)) 
++        av_log(ctx, AV_LOG_WARNING, "The command seting of input width or height is different to the model requirement\n");
++
++
+     check = check_modelinput_inlink(&model_input, inlink);
+     if (check != 0) {
+         return check;
+@@ -204,6 +230,9 @@ static int config_output(AVFilterLink *outlink)
+         return result;
+     }
+ 
++    if ((ctx->dnnctx.output_width != outlink->w) || (ctx->dnnctx.output_height != outlink->h))
++        av_log(ctx, AV_LOG_WARNING, "The command seting of output width or height is different to the model requirement\n");
++
+     prepare_uv_scale(outlink);
+ 
+     return 0;
+@@ -251,22 +280,43 @@ static int flush_frame(AVFilterLink *outlink, int64_t pts, int64_t *out_pts)
+         return -1;
+     }
+ 
+-    do {
+-        AVFrame *in_frame = NULL;
+-        AVFrame *out_frame = NULL;
+-        async_state = ff_dnn_get_result(&ctx->dnnctx, &in_frame, &out_frame);
+-        if (out_frame) {
+-            if (isPlanarYUV(in_frame->format))
+-                copy_uv_planes(ctx, out_frame, in_frame);
+-            av_frame_free(&in_frame);
+-            ret = ff_filter_frame(outlink, out_frame);
+-            if (ret < 0)
+-                return ret;
+-            if (out_pts)
+-                *out_pts = out_frame->pts + pts;
+-        }
+-        av_usleep(5000);
+-    } while (async_state >= DAST_NOT_READY);
++    if (ctx->dnnctx.nif == 1) {
++        do {
++            AVFrame *in_frame = NULL;
++            AVFrame *out_frame = NULL;
++            async_state = ff_dnn_get_result(&ctx->dnnctx, &in_frame, &out_frame);
++            if (out_frame) {
++                if (isPlanarYUV(in_frame->format))
++                    copy_uv_planes(ctx, out_frame, in_frame);
++                av_frame_free(&in_frame);
++                ret = ff_filter_frame(outlink, out_frame);
++                if (ret < 0)
++                    return ret;
++                if (out_pts)
++                    *out_pts = out_frame->pts + pts;
++            }
++            av_usleep(5000);
++        } while (async_state >= DAST_NOT_READY);
++    } else {
++        do {
++            AVFrame *in_frame = NULL;
++            AVFrame *out_frame = NULL;
++            async_state = ff_dnn_get_result(&ctx->dnnctx, &in_frame, &out_frame);
++            if(async_state == DAST_SUCCESS) {
++                if (av_fifo_can_read(ctx->dnnctx.out_queue) >= ctx->dnnctx.nif) {
++                    for (int i = 0; i < ctx->dnnctx.nif; i++) {
++                        av_fifo_read(ctx->dnnctx.out_queue, &out_frame, 1);
++                        ret = ff_filter_frame(outlink, out_frame);
++                        if (ret < 0)
++                            return ret;
++                    }
++                }
++                else
++                    break;
++            }
++            av_usleep(5000);
++        } while (async_state >= DAST_NOT_READY);
++    }
+ 
+     return 0;
+ }
+@@ -284,8 +334,47 @@ static int activate(AVFilterContext *filter_ctx)
+ 
+     FF_FILTER_FORWARD_STATUS_BACK(outlink, inlink);
+ 
+-    do {
+-        // drain all input frames
++    if (ctx->dnnctx.nif <= 0) {
++        av_log(ctx, AV_LOG_ERROR, "the model reflects NIF is %d, please check \n",
++                                   ctx->dnnctx.nif);
++        return AVERROR(EIO);
++    }
++
++    if (ctx->dnnctx.nif == 1) {
++        do {
++            // drain all input frames
++            ret = ff_inlink_consume_frame(inlink, &in);
++            if (ret < 0)
++                return ret;
++            if (ret > 0) {
++                out = ff_get_video_buffer(outlink, outlink->w, outlink->h);
++                if (!out) {
++                    av_frame_free(&in);
++                    return AVERROR(ENOMEM);
++                }
++                av_frame_copy_props(out, in);
++                if (ff_dnn_execute_model(&ctx->dnnctx, in, out) != 0) {
++                    return AVERROR(EIO);
++                }
++            }
++        } while (ret > 0);
++
++        // drain all processed frames
++        do {
++            AVFrame *in_frame = NULL;
++            AVFrame *out_frame = NULL;
++            async_state = ff_dnn_get_result(&ctx->dnnctx, &in_frame, &out_frame);
++            if (out_frame) {
++                if (isPlanarYUV(in_frame->format))
++                    copy_uv_planes(ctx, out_frame, in_frame);
++                av_frame_free(&in_frame);
++                ret = ff_filter_frame(outlink, out_frame);
++                if (ret < 0)
++                    return ret;
++                got_frame = 1;
++            }
++        } while (async_state == DAST_SUCCESS);
++    } else {
+         ret = ff_inlink_consume_frame(inlink, &in);
+         if (ret < 0)
+             return ret;
+@@ -295,27 +384,27 @@ static int activate(AVFilterContext *filter_ctx)
+                 return AVERROR(ENOMEM);
+             }
+             av_frame_copy_props(out, in);
++            av_fifo_write(ctx->dnnctx.in_queue, &in, 1);
++            av_fifo_write(ctx->dnnctx.out_queue, &out, 1);
++        }
++        if(av_fifo_can_read(ctx->dnnctx.in_queue) == ctx->dnnctx.nif) {
+             if (ff_dnn_execute_model(&ctx->dnnctx, in, out) != 0) {
+                 return AVERROR(EIO);
+             }
++            AVFrame *in_frame = NULL;
++            AVFrame *out_frame = NULL;
++            async_state = ff_dnn_get_result(&ctx->dnnctx, &in_frame, &out_frame);
++            if(async_state == DAST_SUCCESS) {
++                for (int i = 0; i < ctx->dnnctx.nif; i++) {
++                    av_fifo_read(ctx->dnnctx.out_queue, &out_frame, 1);
++                    ret = ff_filter_frame(outlink, out_frame);
++                    if (ret < 0)
++                        return ret;
++                    got_frame += 1;
++                }
++            }
+         }
+-    } while (ret > 0);
+-
+-    // drain all processed frames
+-    do {
+-        AVFrame *in_frame = NULL;
+-        AVFrame *out_frame = NULL;
+-        async_state = ff_dnn_get_result(&ctx->dnnctx, &in_frame, &out_frame);
+-        if (out_frame) {
+-            if (isPlanarYUV(in_frame->format))
+-                copy_uv_planes(ctx, out_frame, in_frame);
+-            av_frame_free(&in_frame);
+-            ret = ff_filter_frame(outlink, out_frame);
+-            if (ret < 0)
+-                return ret;
+-            got_frame = 1;
+-        }
+-    } while (async_state == DAST_SUCCESS);
++    }
+ 
+     // if frame got, schedule to next filter
+     if (got_frame)
+-- 
+2.34.1
+

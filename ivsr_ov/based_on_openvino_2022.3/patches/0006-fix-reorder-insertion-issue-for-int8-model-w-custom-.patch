@@ -1,0 +1,43 @@
+From 7fbd954591d88fabeb4f581bd67c78400704ace0 Mon Sep 17 00:00:00 2001
+From: Jingxuan Dong <jingxuan.dong@intel.com>
+Date: Thu, 16 Mar 2023 10:11:34 +0800
+Subject: [PATCH 6/7] fix reorder insertion issue for int8 model w/ custom op
+ (#30)
+
+---
+ .../graph_optimizer/prepare_primitive_fusing.cpp     | 12 +++++++++---
+ 1 file changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/src/plugins/intel_gpu/src/graph/graph_optimizer/prepare_primitive_fusing.cpp b/src/plugins/intel_gpu/src/graph/graph_optimizer/prepare_primitive_fusing.cpp
+index 3ceb32c5ed..7a1ac05886 100644
+--- a/src/plugins/intel_gpu/src/graph/graph_optimizer/prepare_primitive_fusing.cpp
++++ b/src/plugins/intel_gpu/src/graph/graph_optimizer/prepare_primitive_fusing.cpp
+@@ -104,7 +104,12 @@ void prepare_primitive_fusing::remove_redundant_reshape(program &p) {
+     node_itr = p.get_processing_order().begin();
+     while (node_itr != p.get_processing_order().end()) {
+         auto node = (*node_itr++);
+-        program_helpers::do_for_types<reorder>(*node, [&p](reorder_node& node) {
++        //todo djx temporarily fix remove redunct reorder for custom op
++        std::string::size_type idx;
++        idx = (node->get_primitive()->id).find( "flow_warp" );
++        if (idx == std::string::npos) {
++            program_helpers::do_for_types<reorder>(*node, [&p](reorder_node& node) {
++            
+             auto& input_node = node.input();
+             if (input_node.get_users().size() > 1 || node.get_users().size() > 1 || node.is_endpoint() || input_node.is_input())
+                 return;
+@@ -120,8 +125,9 @@ void prepare_primitive_fusing::remove_redundant_reshape(program &p) {
+                 }
+                 p.add_optimized_primitive_info(node.id());
+                 p.extract_and_remove(node);
+-            }
+-        });
++            }   
++            });
++        }
+     }
+ }
+ 
+-- 
+2.25.1
+

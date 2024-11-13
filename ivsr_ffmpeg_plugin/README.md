@@ -1,100 +1,54 @@
-# iVSR FFmpeg plugin
-The folder `ivsr_ffmpeg_plugin` enables to do BasicVSR inference using FFmpeg with OpenVINO as backend. The inference is validated with OpenVINO 2022.1 and FFmpeg 5.1. We've implemented some patches on the OpenVINO and FFmpeg to enable the pipeline.
-The folder `patches` includes our patches for FFmpeg.
+# iVSR FFmpeg plugin - iVSR SDK based
+The folder `ivsr_ffmpeg_plugin` enables model inference using FFmpeg with iVSR SDK as backend. It provides additional `ivsr` backend for the DNN interface called by the `dnn_processing` filter.<br>
+The patches included in `patches` folder are specifically for FFmpeg n6.1.<br>
 
-## Prerequisites
-The FFmpeg plugin is validated on:
-- Intel Xeon hardware platform
-- (Optional) Intel Data Center GPU Flex 170(*aka* ATS-M1 150W)
-- Host OS: Linux based OS (Ubuntu 20.04)
-- Docker OS: Ubuntu 20.04
-- kernel: 5.10.54 (Optional to enable Intel® Data Center GPU Flex Series accelerator)
-- cmake
-- make
-- git
-- docker 
+<div align=center>
+<img src="./figs/ffmpeg_ivsr_sdk_backend.png" width = 80% height = 80% />
+</div>
 
-## Build Docker Image
-Before building docker image, make sure you have access to the public repo of OpenVINO and FFmpeg.
-The following is the sample command line used for building docker image.
-- Set up docker service
-```
-sudo mkdir -p /etc/systemd/system/docker.service.d
-printf "[Service]\nEnvironment=\"HTTPS_PROXY=$https_proxy\" \"NO_PROXY=$no_proxy\"\n" | sudo tee /etc/systemd/system/docker.service.d/proxy.conf
-sudo systemctl daemon-reload
-sudo systemctl restart docker
-```
-- Pull the source code of OpenVINO and FFmpeg with git
-```
-cd <ivsr-local-folder>
-git submodule init
-git submodule update --remote --recursive
-```
-- Build docker image
-```
-cd ivsr_ffmpeg_plugin
-sudo docker build -f Dockerfile -t ffmpeg-ov1 ..
-```
-If the image is built successfully, you can find a docker image named `ffmpeg-ov1:latest` with command `docker images`.
-
-## Start docker container and set up BasicVSR inference environment
-When the docker image is built successfully, you can start a container and set up the OpenVINO environment for BasicVSR inference as below. Please note that `--shm-size=128g` is necessary because a large amount of share memory will be requested by the FFmpeg inference filter.
-```
-docker run -itd --name ffmpeg-ov1 --privileged -e MALLOC_CONF="oversize_threshold:1,background_thread:true,metadata_thp:auto,dirty_decay_ms:9000000000,muzzy_decay_ms:9000000000" --shm-size=128g ffmpeg-ov1-new:latest bash
-docker exec -it ffmpeg-ov1 /bin/bash
-source /workspace/ivsr/ivsr_gpu_opt/based_on_openvino_2022.1/openvino/install/setupvars.sh
-ldconfig
-```
-The above command lines will start a docker container named `ffmpeg-ov1`.
-## How to run BasicVSR inference with FFmpeg-plugin
-- Use FFmpeg-plugin to run BasicVSR inference
-```
-cd /workspace/ivsr/ivsr_ffmpeg_plugin/ffmpeg
-./ffmpeg -i <your test video> -vf dnn_processing=dnn_backend=openvino:model=<your model.xml>:input=input:output=output:nif=3:backend_configs='nireq=1&device=CPU' test_out.mp4
-```
-
-- Work modes of FFmpeg-plugin for BasicVSR
-
-Decoder and encoder work similar to FFmpeg 5.1. Options and command line formats are not changed.
-Only the options of video filter `dnn_processing` are introduced.
+## How to run inference with FFmpeg-plugin
+To run inference with iVSR SDK, you need to specify `ivsr` as the backend for the `dnn_processing` filter. Here is an example of how to do it: `dnn_processing=dnn_backend=ivsr`. <br>
+Additionally, there are other parameters that you can use. These parameters are listed in the table below:<br>
 
 |AVOption name|Description|Default value|Recommended value(s)|
 |:--|:--|:--|:--|
-|dnn_backend|DNN backend framework name|native|openvino|
-|input_width|input video width|1920|1920|
-|input_height|input video height|1080|1080|
+|dnn_backend|DNN backend framework name|native|ivsr|
 |model|path to model file|NULL|Available full path of the released model files|
 |input|input name of the model|NULL|input|
 |output|output name of the model|NULL|output|
-|backend_configs:nireq|number of inference request|2|1 or 2 or 4|
 |backend_configs:device|device for inference task|CPU|CPU or GPU|
+|backend_configs:model_type|type for models|0|0 for Enhanced BasicVSR, 1 for SVP models, 2 for Enhanced EDSR, 3 for one CUSTOM VSR, 4 for TSENet|
+|backend_configs:normalize_factor|factor for normalization|1.0|255.0 for Enhanced EDSR, 1.0 for other models supported in current version|
+|backend_configs:extension|extension lib file full path, required for loading Enhanced BasicVSR model|
+|backend_configs:op_xml|custom op xml file full path, required for loading Enhanced BasicVSR model|
+|nif|number of input frames in batch sent to the DNN backend|1|3 for Enhanced BasicVSR, 1 for other models supported in current version|
 
-Apart from the common AVOptions which can be set in the normal FFmpeg command line with format `AVOption=value`, there are two options `nireq` and `device` to be set with the `backend_configs` option. The command format is `backend_configs='nireq=value&device=value'` when you want to set both of them.
+Here are some examples of FFmpeg command lines to run inference with the supported models using the `ivsr` backend.<br>
 
-- Inference model precision and custom operation supportive 
-
-OpenVINO models with different precisions can be supported by the FFmpeg-plugin. In this release, we have validated FP32 and INT8 models which are converted and quantized by the model optimizer of OpenVINO 2022.1.
-
-The [Custom OpenVINO™ Operations](https://docs.openvino.ai/latest/openvino_docs_Extensibility_UG_add_openvino_ops.html) is a great feature of OpenVINO which allows users to support models with operations that OpenVINO does not support out-of-the-box. 
-This FFmpeg-plugin supports BasicVSR which utilizes custom operations. There is no additional options required for the command line in the case you have set the right path of the model. Please be noted that the dependent files are located in the docker container folder `/workspace/ivsr/ivsr_gpu_opt/based_on_openvino_2022.1/openvino/flow_warp_custom_op` and `/workspace/ivsr/ivsr_gpu_opt/based_on_openvino_2022.1/openvino/bin/intel64/Release/lib`, do not make any changes to them.
-
-## (Optional) Intel® Data Center GPU Flex Series Supportive
-The default docker image doesn't include Intel® Data Center GPU Flex Series driver, so you may not be able to accelerate inference with GPU in the FFmpeg pipeline. You can start a docker container by the above steps and install the driver in the docker container.
-
-Below is the selected components during the driver installation. Some indications may be different, but you can reference this component selection.
+- Command sample to run Enhanced BasicVSR inference, the input pixel format supported by the model is `bgr24`.
 ```
-Do you want to update kernel xx.xx.xx ?
-'y/n' default is y:n
-Do you want to install mesa ?
-'y/n' default is y:n
-Do you want to install media ?
-'y/n' default is y:y
-Do you want to install opencl ?
-'y/n' default is n:y
-Do you want to install level zero ?
-'y/n' default is n:n
-Do you want to install ffmpeg ?
-'y/n' default is n:n
-Do you want to install tools ?
-'y/n' default is n:n
+cd <iVSR project path>/ivsr_ffmpeg_plugin/ffmpeg
+./ffmpeg -i <your test video> -vf format=bgr24,dnn_processing=dnn_backend=ivsr:model=<basic_vsr_model.xml>:input=input:output=output:nif=3:backend_configs='device=<CPU or GPU>&extension=<iVSR project path>/ivsr_ov/based_on_openvino_2022.3/openvino/bin/intel64/Release/libcustom_extension.so&op_xml=<iVSR project path>/ivsr_ov/based_on_openvino_2022.3/openvino/flow_warp_cl_kernel/flow_warp.xml' test_out.mp4
+```
+Please note that for the Enhanced BasicVSR model, you need to set the `extension` and `op_xml` options (with `backend_configs`) in the command line. After applying OpenVINO's patches and building OpenVINO, the extension lib file is located in `<OpenVINO folder>/openvino/bin/intel64/Release/libcustom_extension.so`, and the op xml file is located in `<OpenVINO folder>/openvino/flow_warp_cl_kernel/flow_warp.xml`.<br>
+
+- Command sample to run SVP models inference
+```
+cd <iVSR project path>/ivsr_ffmpeg_plugin/ffmpeg
+./ffmpeg -i <your test video> -vf format=bgr24,dnn_processing=dnn_backend=ivsr:model=<svp_model.xml>:input=input:output=output:nif=1:backend_configs='device=<CPU or GPU>&model_type=1' -pix_fmt yuv420p test_out.mp4
+```
+- Command sample to run Enhanced EDSR inference
+```
+cd <iVSR project path>/ivsr_ffmpeg_plugin/ffmpeg
+./ffmpeg -i <your test video> -vf format=bgr24,dnn_processing=dnn_backend=ivsr:model=<edsr_model.xml>:input=input:output=output:nif=1:backend_configs='device=<CPU or GPU>&model_type=2&normalize_factor=255.0' -pix_fmt yuv420p test_out.mp4
+```
+- Command sample to run CUSTOM VSR inference. Note the input pixel format supported by this model is `yuv420p`.
+```
+cd <iVSR project path>/ivsr_ffmpeg_plugin/ffmpeg
+./ffmpeg -i <your test video> -vf format=yuv420p,dnn_processing=dnn_backend=ivsr:model=<customvsr_model.xml>:input=input:output=output:nif=1:backend_configs='nireq=1&device=CPU&model_type=3' -pix_fmt yuv420p test_out.mp4
+```
+- Command sample to run TSENet model
+```
+cd <iVSR project path>/ivsr_ffmpeg_plugin/ffmpeg
+./ffmpeg -i <your test video> -vf format=bgr24,dnn_processing=dnn_backend=ivsr:model=<tsenet_model.xml>:input=input:output=output:nif=1:backend_configs='device=<CPU or GPU>&model_type=4' -pix_fmt yuv420p test_out.mp4
 ```

@@ -1,0 +1,66 @@
+From c26c50018242e8c038705b8ca3b6b0ea16a43afe Mon Sep 17 00:00:00 2001
+From: Liang <xiaoxia.liang@intel.com>
+Date: Wed, 22 May 2024 02:24:24 +0800
+Subject: [PATCH] ivsr_dnn_backend: clamp output value to limited range[16,
+ 235] when color range of output frame is tv range.
+
+Signed-off-by: Liang <xiaoxia.liang@intel.com>
+---
+ libavfilter/dnn/dnn_backend_ivsr.c | 27 +++++++++++++++++++++++++++
+ 1 file changed, 27 insertions(+)
+
+diff --git a/libavfilter/dnn/dnn_backend_ivsr.c b/libavfilter/dnn/dnn_backend_ivsr.c
+index 879ca29499..990403b19d 100644
+--- a/libavfilter/dnn/dnn_backend_ivsr.c
++++ b/libavfilter/dnn/dnn_backend_ivsr.c
+@@ -117,6 +117,15 @@ static int get_datatype_size(DNNDataType dt)
+     }
+ }
+ 
++static uint8_t clamp(uint8_t val, uint8_t min, uint8_t max) {
++    if (val < min)
++        return min;
++    else if (val > max)
++        return max;
++    else
++        return val;
++}
++
+ /* returns
+  *     DNN_GENERIC_ERROR,
+  *     DNN_MORE_FRAMES - waiting for more input frames,
+@@ -428,6 +437,15 @@ static void infer_completion_callback(void *args)
+                             ff_proc_from_dnn_to_frame(tmp_frame, &output,
+                                                       &ivsr_model->model->
+                                                       filter_ctx);
++                            // clamp output to [16, 235] range for Y plane when color range of output is TV range,
++                            // assume model only process Y plane when output.channels = 1. AVCOL_RANGE_MPEG is mean tv range.
++                            if (tmp_frame->color_range == AVCOL_RANGE_MPEG && output.channels == 1) {
++                                uint8_t min_x = 16, max_x = 235;
++                                for (int index = 0; index < tmp_frame->height * tmp_frame->linesize[0]; ++index) {
++                                    uint8_t value = tmp_frame->data[0][index];
++                                    tmp_frame->data[0][index] = clamp(tmp_frame->data[0][index], min_x, max_x);
++                                }
++                            }
+                             output.data +=
+                                 output.height * output.width *
+                                 output.channels * sizeof(float);
+@@ -459,6 +477,15 @@ static void infer_completion_callback(void *args)
+                     ff_proc_from_dnn_to_frame(task->out_frame, &output,
+                                               &ivsr_model->model->
+                                               filter_ctx);
++                    // clamp output to [16, 235] range for Y plane when color range of output is TV range,
++                    // assume model only process Y plane when output.channels = 1. AVCOL_RANGE_MPEG is mean tv range.
++                   if (task->out_frame->color_range == AVCOL_RANGE_MPEG && output.channels == 1) {
++                        uint8_t min_x = 16, max_x = 235;
++                        for (int index = 0; index < task->out_frame->height * task->out_frame->linesize[0]; ++index) {
++                            uint8_t value = task->out_frame->data[0][index];
++                            task->out_frame->data[0][index] = clamp(task->out_frame->data[0][index], min_x, max_x);
++                        }
++                    }
+                 }
+             }
+         } else {
+-- 
+2.34.1
+

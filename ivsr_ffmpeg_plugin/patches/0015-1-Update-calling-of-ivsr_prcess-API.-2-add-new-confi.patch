@@ -1,0 +1,138 @@
+From 6498c87ed346d22728a0298e061d818d88821e43 Mon Sep 17 00:00:00 2001
+From: Jerry Dong <jerry.dong@intel.com>
+Date: Mon, 22 Apr 2024 11:18:33 +0800
+Subject: [PATCH] 1)Update calling of ivsr_process API. 2)add new config
+ INPUT_RES
+
+---
+ libavfilter/dnn/dnn_backend_ivsr.c | 52 +++++++++++++++---------------
+ 1 file changed, 26 insertions(+), 26 deletions(-)
+
+diff --git a/libavfilter/dnn/dnn_backend_ivsr.c b/libavfilter/dnn/dnn_backend_ivsr.c
+index f088dd1e3e..883b06dae1 100644
+--- a/libavfilter/dnn/dnn_backend_ivsr.c
++++ b/libavfilter/dnn/dnn_backend_ivsr.c
+@@ -476,7 +476,6 @@ static int execute_model_ivsr(IVSRRequestItem * request,
+     TaskItem *task = NULL;
+     IVSRContext *ctx = NULL;
+     IVSRModel *ivsr_model = NULL;
+-    int input_size[5] = { 0, 0, 0, 0, 0 };
+ 
+     if (ff_queue_size(inferenceq) == 0) {
+         av_freep(&request->in_frames);
+@@ -490,14 +489,6 @@ static int execute_model_ivsr(IVSRRequestItem * request,
+     ivsr_model = task->model;
+     ctx = &ivsr_model->ctx;
+ 
+-    status =
+-        ivsr_get_attr(ivsr_model->handle, INPUT_TENSOR_DESC, input_size);
+-    if (status != OK) {
+-        av_log(ctx, AV_LOG_ERROR, "Failed to get input dimensions\n");
+-        ret = DNN_GENERIC_ERROR;
+-        goto err;
+-    }
+-
+     if (task->async) {
+         ret = fill_model_input_ivsr(ivsr_model, request);
+         if (ret != 0) {
+@@ -505,7 +496,7 @@ static int execute_model_ivsr(IVSRRequestItem * request,
+         }
+         status =
+             ivsr_process(ivsr_model->handle, request->in_frames,
+-                         request->out_frames, input_size, &request->cb);
++                         request->out_frames, &request->cb);
+         if (status != OK) {
+             av_log(ctx, AV_LOG_ERROR,
+                    "Failed to process the inference on input data seq\n");
+@@ -573,6 +564,7 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+     ivsr_config_t *config_customlib = NULL;
+     ivsr_config_t *config_cldnn = NULL;
+     ivsr_config_t *config_reshape = NULL;
++    ivsr_config_t *config_input_res = NULL;
+     int nif = 0;
+     int input_dims[5] = { 0, 0, 0, 0, 1 };
+     int output_dims[5] = { 0, 0, 0, 0, 1 };
+@@ -636,15 +628,30 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+     config_device->next = NULL;
+     config->next = config_device;
+ 
++    AVFilterLink *inlink = filter_ctx->inputs[0];
++    int frame_h = inlink->h;
++    int frame_w = inlink->w;
++
++    // input_res setting
++    config_input_res = av_mallocz(sizeof(ivsr_config_t));
++    if (config_input_res == NULL) {
++        av_log(ctx, AV_LOG_ERROR, "Failed to malloc input_res config\n");
++        goto err;
++    }
++
++    char input_res_string[40] = {0};
++    sprintf(input_res_string, "%d,%d\0", frame_w, frame_h);
++    config_input_res->key   = INPUT_RES;
++    config_input_res->value = input_res_string;
++    config_input_res->next  = NULL;
++    config_device->next     = config_input_res;
++
+     // reshape setting
+     config_reshape = av_mallocz(sizeof(ivsr_config_t));
+     if (config_reshape == NULL) {
+         av_log(ctx, AV_LOG_ERROR, "Failed to malloc reshape config\n");
+         goto err;
+     }
+-    AVFilterLink *inlink = filter_ctx->inputs[0];
+-    int frame_h = inlink->h;
+-    int frame_w = inlink->w;
+ 
+     char shape_string[40];
+     switch (ivsr_model->model_type) {
+@@ -662,11 +669,12 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+         av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
+         return DNN_GENERIC_ERROR;
+     }
+-
+-    config_reshape->key = RESHAPE_SETTINGS;
++    config_reshape->key   = RESHAPE_SETTINGS;
++    // by default it sets the same resolution as input res config.
++    // If you want to enable smart-patch, set a smaller shape than the input.
+     config_reshape->value = shape_string;
+-    config_reshape->next = NULL;
+-    config_device->next = config_reshape;
++    config_reshape->next  = NULL;
++    config_input_res->next = config_reshape;
+ 
+     if (ctx->options.extension != NULL) {
+         // extension
+@@ -873,20 +881,12 @@ int ff_dnn_flush_ivsr(const DNNModel * model)
+     IVSRRequestItem *request;
+     IVSRStatus status;
+     int ret;
+-    int input_size[] = { 0, 0, 0, 0, 0 };
+ 
+     if (ff_queue_size(ivsr_model->lltask_queue) == 0) {
+         // no pending task need to flush
+         return 0;
+     }
+ 
+-    status =
+-        ivsr_get_attr(ivsr_model->handle, INPUT_TENSOR_DESC, input_size);
+-    if (status != OK) {
+-        av_log(ctx, AV_LOG_ERROR, "Failed to get input dimensions\n");
+-        return AVERROR(EINVAL);
+-    }
+-
+     request = ff_safe_queue_pop_front(ivsr_model->request_queue);
+     if (!request) {
+         av_log(ctx, AV_LOG_ERROR, "unable to get infer request.\n");
+@@ -901,7 +901,7 @@ int ff_dnn_flush_ivsr(const DNNModel * model)
+ 
+     status =
+         ivsr_process(ivsr_model->handle, request->in_frames,
+-                     request->out_frames, input_size, &request->cb);
++                     request->out_frames, &request->cb);
+     if (status != OK) {
+         av_log(ctx, AV_LOG_ERROR,
+                "Failed to process the inference on input data seq\n");
+-- 
+2.34.1
+

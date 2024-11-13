@@ -1,0 +1,152 @@
+From 88cd54646546bdbec39e51f64e086c09f9607d82 Mon Sep 17 00:00:00 2001
+From: "Xie, Lin" <lin.xie@intel.com>
+Date: Tue, 7 Nov 2023 11:16:12 +0800
+Subject: [PATCH] Support new model type in dnn_ivsr backend
+
+---
+ libavfilter/dnn/dnn_backend_ivsr.c | 52 ++++++++++++++++++++++++++----
+ 1 file changed, 46 insertions(+), 6 deletions(-)
+
+diff --git a/libavfilter/dnn/dnn_backend_ivsr.c b/libavfilter/dnn/dnn_backend_ivsr.c
+index b06fb95678..a13e823e3b 100644
+--- a/libavfilter/dnn/dnn_backend_ivsr.c
++++ b/libavfilter/dnn/dnn_backend_ivsr.c
+@@ -44,6 +44,7 @@ typedef struct IVSROptions {
+     int batch_size;
+     char *extension;
+     char *op_xml;
++    int model_type;
+ } IVSROptions;
+ 
+ typedef struct IVSRContext {
+@@ -53,7 +54,9 @@ typedef struct IVSRContext {
+ 
+ typedef enum {
+     UNKNOWN_MODEL = -1,
+-    BASICVSR
++    BASICVSR,
++    VIDEOPROC,
++    MODEL_TYPE_NUM
+ } ModelType;
+ 
+ typedef struct IVSRModel {
+@@ -85,6 +88,7 @@ static const AVOption dnn_ivsr_options[] = {
+     { "batch_size",  "batch size per request, NOT usable for BasicVSR model", OFFSET(options.batch_size),  AV_OPT_TYPE_INT,    { .i64 = 1 },     1, 1000, FLAGS},
+     { "extension",  "extension lib file full path, NOT usable for BasicVSR model", OFFSET(options.extension),  AV_OPT_TYPE_STRING,    { .str = "../../../ivsr_gpu_opt/based_on_openvino_2022.3/openvino/bin/intel64/Release/libcustom_extension.so" },     0, 0, FLAGS},
+     { "op_xml",  "custom op xml file full path, NOT usable for BasicVSR model", OFFSET(options.op_xml),  AV_OPT_TYPE_STRING,    { .str = "../../../ivsr_gpu_opt/based_on_openvino_2022.3/openvino/flow_warp_cl_kernel/flow_warp.xml" },     0, 0, FLAGS},
++    { "model_type",  "dnn model type", OFFSET(options.model_type),  AV_OPT_TYPE_INT,    { .i64 = 0 },     0, MODEL_TYPE_NUM - 1, FLAGS},
+     { NULL }
+ };
+ 
+@@ -131,6 +135,11 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+         input.height = dims[3];
+         input.width = dims[4];
+         input.dt = DNN_FLOAT;
++    } else if (ivsr_model->model_type == VIDEOPROC) {
++        input.channels = dims[1];
++        input.height = dims[2];
++        input.width = dims[3];
++        input.dt = DNN_FLOAT;
+     } else {
+         av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
+         return DNN_GENERIC_ERROR;
+@@ -200,6 +209,15 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+                     ff_proc_from_frame_to_dnn(task->in_frame, &input,
+                                               ivsr_model->model->
+                                               filter_ctx);
++                    memcpy((uint8_t*)in_in_packed,
++                           (uint8_t*)input.data,
++                           input.height * input.width * input.channels * sizeof(float));
++                    for (int pos = 0; pos < input.height * input.width; pos++) {
++                        for (int ch = 0; ch < input.channels; ch++) {
++                            ((float*)input.data)[(ch * input.height * input.width + pos)] =
++                                ((float*)in_in_packed)[(pos * input.channels + (input.channels - 1 - ch))];
++                        }
++                    }
+                 }
+             }
+         }
+@@ -238,6 +256,10 @@ static void infer_completion_callback(void *args)
+         output.channels = dims[1];
+         output.height = dims[3];
+         output.width = dims[4];
++    } else if (ivsr_model->model_type == VIDEOPROC) {
++        output.channels = dims[1];
++        output.height = dims[2];
++        output.width = dims[3];
+     } else {
+         av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
+         return;
+@@ -300,6 +322,16 @@ static void infer_completion_callback(void *args)
+                         offset++;
+                     } while (offset != dims[2]);
+                 } else {
++                    memcpy((uint8_t*)out_in_planar,
++                           (uint8_t*)output.data,
++                           output.height * output.width * output.channels * sizeof(float));
++                    for (int pos = 0; pos < output.height * output.width; pos++) {
++                        for (int ch = 0; ch < output.channels; ch++) {
++                            ((float*)output.data)[(pos * output.channels + ch)] =
++                                ((float*)
++                                     out_in_planar)[((output.channels - 1 - ch) * output.height * output.width + pos)];
++                        }
++                    }
+                     ff_proc_from_dnn_to_frame(task->out_frame, &output,
+                                               &ivsr_model->model->
+                                               filter_ctx);
+@@ -348,6 +380,11 @@ static int get_input_ivsr(void *model, DNNData * input,
+         input->height = dims[3];
+         input->width = dims[4];
+         input->dt = DNN_FLOAT;
++    } else if (ivsr_model->model_type == VIDEOPROC) {
++        input->channels = dims[1];
++        input->height = dims[2];
++        input->width = dims[3];
++        input->dt = DNN_FLOAT;
+     } else {
+         av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
+         return DNN_GENERIC_ERROR;
+@@ -484,6 +521,9 @@ static int get_output_ivsr(void *model, const char *input_name,
+     if (ivsr_model->model_type == BASICVSR) {
+         *output_height = dims[3];
+         *output_width = dims[4];
++    } else if (ivsr_model->model_type == VIDEOPROC) {
++        *output_height = dims[2];
++        *output_width = dims[3];
+     } else {
+         av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
+         ret = DNN_GENERIC_ERROR;
+@@ -514,8 +554,8 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+     ivsr_config_t *config_customlib = NULL;
+     ivsr_config_t *config_cldnn = NULL;
+     int nif = 0;
+-    int input_dims[5] = { 0, 0, 0, 0, 0 };
+-    int output_dims[5] = { 0, 0, 0, 0, 0 };
++    int input_dims[5] = { 0, 0, 0, 0, 1 };
++    int output_dims[5] = { 0, 0, 0, 0, 1 };
+ 
+     model = av_mallocz(sizeof(DNNModel));
+     if (!model) {
+@@ -535,9 +575,6 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+     ivsr_model->all_input_names = NULL;
+     ivsr_model->all_output_names = NULL;
+ 
+-    // Only BASICVSR now
+-    ivsr_model->model_type = BASICVSR;
+-
+     // parse options
+     av_opt_set_defaults(ctx);
+     if (av_opt_set_from_string(ctx, options, NULL, "=", "&") < 0) {
+@@ -555,6 +592,9 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+         // the default value is a rough estimation
+         ctx->options.nireq = av_cpu_count() / 2 + 1;
+     }
++
++    ivsr_model->model_type = ctx->options.model_type;
++
+     // set ivsr config
+     // input model
+     ivsr_model->config = av_mallocz(sizeof(ivsr_config_t));
+-- 
+2.25.1
+

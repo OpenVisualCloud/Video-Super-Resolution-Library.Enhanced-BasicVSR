@@ -1,0 +1,153 @@
+From ae46ca347c5354d271daf2b8ccabbdd72b3bc2ca Mon Sep 17 00:00:00 2001
+From: Liang <xiaoxia.liang@intel.com>
+Date: Sat, 30 Mar 2024 02:19:08 +0800
+Subject: [PATCH] dnn_backend_ivsr: Replaced if/else with switch for model_type
+ checking.
+
+Signed-off-by: Liang <xiaoxia.liang@intel.com>
+---
+ libavfilter/dnn/dnn_backend_ivsr.c | 66 +++++++++++++++++++-----------
+ 1 file changed, 43 insertions(+), 23 deletions(-)
+
+diff --git a/libavfilter/dnn/dnn_backend_ivsr.c b/libavfilter/dnn/dnn_backend_ivsr.c
+index 50a51a9b4a..a9d4d4b6b2 100644
+--- a/libavfilter/dnn/dnn_backend_ivsr.c
++++ b/libavfilter/dnn/dnn_backend_ivsr.c
+@@ -136,18 +136,22 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+         return DNN_GENERIC_ERROR;
+     }
+ 
+-    if (ivsr_model->model_type == BASICVSR) {
++    switch (ivsr_model->model_type) {
++    case BASICVSR:
+         input.channels = dims[1];
+         input.height = dims[3];
+         input.width = dims[4];
+         input.dt = DNN_FLOAT;
+-    } else if (ivsr_model->model_type == VIDEOPROC || ivsr_model->model_type == EDSR
+-                || ivsr_model->model_type == CUSTVSR) {
++        break;
++    case VIDEOPROC:
++    case EDSR:
++    case CUSTVSR:
+         input.channels = dims[2];
+         input.height = dims[3];
+         input.width = dims[4];
+         input.dt = DNN_FLOAT;
+-    } else {
++        break;
++    default:
+         av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
+         return DNN_GENERIC_ERROR;
+     }
+@@ -278,19 +282,24 @@ static void infer_completion_callback(void *args)
+         return;
+     }
+ 
+-    if (ivsr_model->model_type == BASICVSR) {
++    switch (ivsr_model->model_type) {
++    case BASICVSR:
+         output.channels = dims[1];
+         output.height = dims[3];
+         output.width = dims[4];
+-    } else if (ivsr_model->model_type == VIDEOPROC || ivsr_model->model_type == EDSR
+-                || ivsr_model->model_type == CUSTVSR) {
++        break;
++    case VIDEOPROC:
++    case EDSR:
++    case CUSTVSR:
+         output.channels = dims[2];
+         output.height = dims[3];
+         output.width = dims[4];
+-    } else {
++        break;
++    default:
+         av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
+         return;
+     }
++
+     output.dt = DNN_FLOAT;
+     output.data = request->out_frames;
+ 
+@@ -415,18 +424,22 @@ static int get_input_ivsr(void *model, DNNData * input,
+         return DNN_GENERIC_ERROR;
+     }
+ 
+-    if (ivsr_model->model_type == BASICVSR) {
++    switch (ivsr_model->model_type) {
++    case BASICVSR:
+         input->channels = dims[1];
+         input->height = dims[3];
+         input->width = dims[4];
+         input->dt = DNN_FLOAT;
+-    } else if (ivsr_model->model_type == VIDEOPROC || ivsr_model->model_type == EDSR
+-                || ivsr_model->model_type == CUSTVSR) {
++        break;
++    case VIDEOPROC:
++    case EDSR:
++    case CUSTVSR:
+         input->channels = dims[2];
+         input->height = dims[3];
+         input->width = dims[4];
+         input->dt = DNN_FLOAT;
+-    } else {
++        break;
++    default:
+         av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
+         return DNN_GENERIC_ERROR;
+     }
+@@ -528,16 +541,17 @@ static int get_output_ivsr(void *model, const char *input_name,
+         return DNN_GENERIC_ERROR;
+     }
+ 
+-    if (ivsr_model->model_type == BASICVSR) {
+-        *output_height = dims[3];
+-        *output_width = dims[4];
+-    } else if (ivsr_model->model_type == VIDEOPROC || ivsr_model->model_type == EDSR
+-                || ivsr_model->model_type == CUSTVSR) {
++    switch (ivsr_model->model_type) {
++    case BASICVSR:
++    case VIDEOPROC:
++    case EDSR:
++    case CUSTVSR:
+         *output_height = dims[3];
+         *output_width = dims[4];
+-    } else {
++        break;
++    default:
+         av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
+-        ret = DNN_GENERIC_ERROR;
++        return DNN_GENERIC_ERROR;
+     }
+ 
+     return ret;
+@@ -655,16 +669,22 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+     int frame_w = inlink->w;
+ 
+     char shape_string[40];
+-    if (ivsr_model->model_type == BASICVSR) {
++    switch (ivsr_model->model_type) {
++    case BASICVSR:
+         sprintf(shape_string, "1,3,3,%d,%d", frame_h, frame_w);
+-    } else if (ivsr_model->model_type == VIDEOPROC || ivsr_model->model_type == EDSR) {
++        break;
++    case VIDEOPROC:
++    case EDSR:
+         sprintf(shape_string, "1,3,%d,%d", frame_h, frame_w);
+-    } else if (ivsr_model->model_type == CUSTVSR) {
++        break;
++    case CUSTVSR:
+         sprintf(shape_string, "1,1,%d,%d", frame_h, frame_w);
+-    } else {
++        break;
++    default:
+         av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
+         return DNN_GENERIC_ERROR;
+     }
++
+     config_reshape->key = RESHAPE_SETTINGS;
+     config_reshape->value = shape_string;
+     config_reshape->next = NULL;
+-- 
+2.34.1
+

@@ -1,0 +1,11 @@
+intel-opencl-icd=22.49.25018.23+i554~22.04
+intel-level-zero-gpu=1.3.25018.23+i554~22.04
+level-zero=1.8.8+i524~u22.04
+level-zero-dev=1.8.8+i524~u22.04
+libigc-dev=1.0.12812.24+i554~22.04
+libigc1=1.0.12812.24+i554~22.04
+libigdfcl-dev=1.0.12812.24+i554~22.04
+libigdfcl1=1.0.12812.24+i554~22.04
+libigdgmm-dev:amd64=22.3.3+i550~22.04
+libigdgmm12:amd64=22.3.3+i550~22.04
+intel-media-va-driver-non-free=23.1.0+i553~22.04

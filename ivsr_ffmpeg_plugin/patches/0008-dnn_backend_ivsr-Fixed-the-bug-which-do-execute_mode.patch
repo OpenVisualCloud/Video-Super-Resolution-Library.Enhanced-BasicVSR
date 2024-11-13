@@ -1,0 +1,88 @@
+From 7e42885f48a165259b6f90cc58bb998f8a6a38ac Mon Sep 17 00:00:00 2001
+From: Liang <xiaoxia.liang@intel.com>
+Date: Thu, 28 Mar 2024 23:47:27 +0800
+Subject: [PATCH] dnn_backend_ivsr: Fixed the bug which do execute_model_ivsr
+ before doing inference for first frame.
+
+get_output_ivsr() only need to get width and height of output frame, the width and height info can be got
+by calling ivsr_get_attr, do not need to call execute_model_ivsr.
+
+Signed-off-by: Liang <xiaoxia.liang@intel.com>
+---
+ libavfilter/dnn/dnn_backend_ivsr.c | 41 +-----------------------------
+ 1 file changed, 1 insertion(+), 40 deletions(-)
+
+diff --git a/libavfilter/dnn/dnn_backend_ivsr.c b/libavfilter/dnn/dnn_backend_ivsr.c
+index e581259b2d..e6b7df1e12 100644
+--- a/libavfilter/dnn/dnn_backend_ivsr.c
++++ b/libavfilter/dnn/dnn_backend_ivsr.c
+@@ -516,19 +516,10 @@ static int get_output_ivsr(void *model, const char *input_name,
+                            const char *output_name, int *output_width,
+                            int *output_height)
+ {
+-    int ret;
++    int ret = 0;
+     IVSRModel *ivsr_model = model;
+     IVSRContext *ctx = &ivsr_model->ctx;
+     IVSRStatus status;
+-    TaskItem *task;
+-    IVSRRequestItem *request;
+-    DNNExecBaseParams exec_params = {
+-        .input_name = NULL,
+-        .output_names = NULL,
+-        .nb_output = 1,
+-        .in_frame = NULL,
+-        .out_frame = NULL,
+-    };
+     int dims[5] = { 0, 0, 0, 0, 0 };
+ 
+     status = ivsr_get_attr(ivsr_model->handle, OUTPUT_TENSOR_DESC, dims);
+@@ -537,28 +528,6 @@ static int get_output_ivsr(void *model, const char *input_name,
+         return DNN_GENERIC_ERROR;
+     }
+ 
+-    task = av_malloc(sizeof(*task));
+-    ret =
+-        ff_dnn_fill_gettingoutput_task(task, &exec_params, ivsr_model,
+-                                       input_height, input_width, ctx);
+-    if (ret != 0) {
+-        goto err;
+-    }
+-
+-    ret = extract_lltask_from_task(task, ivsr_model->lltask_queue, NULL);
+-    if (ret != 0) {
+-        av_log(ctx, AV_LOG_ERROR,
+-               "unable to extract inference from task.\n");
+-        goto err;
+-    }
+-
+-    request = ff_safe_queue_pop_front(ivsr_model->request_queue);
+-    if (!request) {
+-        av_log(ctx, AV_LOG_ERROR, "unable to get infer request.\n");
+-        ret = AVERROR(EINVAL);
+-        goto err;
+-    }
+-
+     if (ivsr_model->model_type == BASICVSR) {
+         *output_height = dims[3];
+         *output_width = dims[4];
+@@ -569,16 +538,8 @@ static int get_output_ivsr(void *model, const char *input_name,
+     } else {
+         av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
+         ret = DNN_GENERIC_ERROR;
+-        goto err;
+     }
+ 
+-    ret = execute_model_ivsr(request, ivsr_model->lltask_queue);
+-
+-    return ret;
+-  err:
+-    av_frame_free(&task->out_frame);
+-    av_frame_free(&task->in_frame);
+-    av_freep(&task);
+     return ret;
+ }
+ 
+-- 
+2.34.1
+

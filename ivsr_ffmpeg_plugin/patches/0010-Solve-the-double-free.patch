@@ -1,0 +1,25 @@
+From a6c58114cc4a7e9fb5a0df931d7db87ff841d12f Mon Sep 17 00:00:00 2001
+From: xueshuwa <xueshu.wang@intel.com>
+Date: Mon, 1 Apr 2024 23:34:18 +0800
+Subject: [PATCH] Solve the double free
+
+---
+ libavfilter/dnn/dnn_backend_ivsr.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/libavfilter/dnn/dnn_backend_ivsr.c b/libavfilter/dnn/dnn_backend_ivsr.c
+index 50a51a9..93c4528 100644
+--- a/libavfilter/dnn/dnn_backend_ivsr.c
++++ b/libavfilter/dnn/dnn_backend_ivsr.c
+@@ -935,7 +935,7 @@ void ff_dnn_free_model_ivsr(DNNModel ** model)
+             av_free(config);
+             config = next;
+         }
+-        av_freep(&handle);
++        //av_freep(&handle);
+         av_freep(&ivsr_model);
+         av_freep(model);
+     }
+-- 
+2.34.1
+

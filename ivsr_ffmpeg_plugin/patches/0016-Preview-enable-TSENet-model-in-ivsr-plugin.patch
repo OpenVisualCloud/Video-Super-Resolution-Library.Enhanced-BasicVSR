@@ -1,0 +1,376 @@
+From fcf8b510213e9b8ac2d2159caa055b301d72c9e0 Mon Sep 17 00:00:00 2001
+From: Jerry Dong <jerry.dong@intel.com>
+Date: Fri, 19 Apr 2024 19:11:33 +0800
+Subject: [PATCH] Preview: enable TSENet model in ivsr plugin.
+
+---
+ libavfilter/dnn/dnn_backend_ivsr.c | 153 ++++++++++++++++++++++++++---
+ libavfilter/vf_dnn_processing.c    |   2 +-
+ 2 files changed, 141 insertions(+), 14 deletions(-)
+
+diff --git a/libavfilter/dnn/dnn_backend_ivsr.c b/libavfilter/dnn/dnn_backend_ivsr.c
+index 883b06dae1..6f2bc198e2 100644
+--- a/libavfilter/dnn/dnn_backend_ivsr.c
++++ b/libavfilter/dnn/dnn_backend_ivsr.c
+@@ -25,6 +25,7 @@
+ 
+ #include "dnn_backend_ivsr.h"
+ #include "dnn_io_proc.h"
++#include "libavutil/imgutils.h"
+ #include "libavformat/avio.h"
+ #include "libavutil/avassert.h"
+ #include "libavutil/cpu.h"
+@@ -37,6 +38,9 @@
+ #include "dnn_backend_common.h"
+ #include <string.h>
+ 
++
++#define DNN_MORE_FRAMES FFERRTAG('M','O','R','E')
++
+ typedef struct IVSROptions {
+     char *device_type;
+     int nireq;
+@@ -60,6 +64,7 @@ typedef enum {
+     VIDEOPROC,
+     EDSR,
+     CUSTVSR,
++    TSENET,
+     MODEL_TYPE_NUM
+ } ModelType;
+ 
+@@ -72,6 +77,8 @@ typedef struct IVSRModel {
+     Queue *task_queue;
+     Queue *lltask_queue;
+     ModelType model_type;
++    int nif; //how many frames in IVSRRequestItem::in_frames
++    AVFifo *frame_queue; //input frames queue
+ } IVSRModel;
+ 
+ typedef struct IVSRRequestItem {
+@@ -110,6 +117,12 @@ static int get_datatype_size(DNNDataType dt)
+     }
+ }
+ 
++/* returns
++ *     DNN_GENERIC_ERROR,
++ *     DNN_MORE_FRAMES - waiting for more input frames,
++ *     AVERROR(*),
++ *     0 - successful
++ */
+ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+                                  IVSRRequestItem * request)
+ {
+@@ -124,10 +137,6 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+     int dims[5] = { 0, 0, 0, 0, 0 };
+     float normalize_factor = ctx->options.normalize_factor;
+ 
+-    lltask = ff_queue_peek_front(ivsr_model->lltask_queue);
+-    av_assert0(lltask);
+-    task = lltask->task;
+-
+     status = ivsr_get_attr(ivsr_model->handle, INPUT_TENSOR_DESC, dims);
+     if (status != OK) {
+         av_log(ctx, AV_LOG_ERROR, "Failed to get input dimensions\n");
+@@ -149,6 +158,13 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+         input.width = dims[4];
+         input.dt = DNN_FLOAT;
+         break;
++    case TSENET:
++        //INFO:for TSENet, dims[2]==nif * channels, and nif==3
++        input.channels = dims[2] / 3;
++        input.height = dims[3];
++        input.width = dims[4];
++        input.dt = DNN_FLOAT;
++        break;
+     default:
+         av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
+         return DNN_GENERIC_ERROR;
+@@ -171,12 +187,12 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+ 
+ 
+     for (int i = 0; i < ctx->options.batch_size; ++i) {
+-        lltask = ff_queue_pop_front(ivsr_model->lltask_queue);
++        //INFO: for TSENET, lltask_queue contains (N-1)th and (N)th frames
++        //so peek (N)th frame.
++        lltask = ff_queue_peek_back(ivsr_model->lltask_queue);
+         if (!lltask) {
+             break;
+         }
+-        request->lltasks[i] = lltask;
+-        request->lltask_count = i + 1;
+         task = lltask->task;
+         if (task->do_ioproc) {
+             if (ivsr_model->model->frame_pre_proc != NULL) {
+@@ -220,6 +236,56 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+                         av_log(ctx, AV_LOG_ERROR,
+                                "Read frame number is %d less than the model requirement!!!\n",
+                                read_frame_num);
++                } else if (ivsr_model->model_type == TSENET) {
++                    //1. copy the input_frame(ref the buffer) and put into ivsr_model->fame_queue
++                    tmp_frame = av_frame_alloc();
++                    if(av_frame_ref(tmp_frame, task->in_frame) < 0) {
++                        if(in_in_packed) av_free(in_in_packed);
++                        return AVERROR(ENOMEM);
++                    }
++
++                    av_fifo_write(ivsr_model->frame_queue, &tmp_frame, 1);
++                    static int frame_num = 0;
++                    if (frame_num == 0) {
++                        //For the first pic in the stream
++                        tmp_frame = av_frame_alloc();
++                        if(av_frame_ref(tmp_frame, task->in_frame) < 0) {
++                            if(in_in_packed) av_free(in_in_packed);
++                            return AVERROR(ENOMEM);
++                        }
++                        av_fifo_write(ivsr_model->frame_queue, &tmp_frame, 1);
++                        frame_num++;
++                    }
++                    //2. check if queue size is >= nif
++                    if (av_fifo_can_read(ivsr_model->frame_queue) >= ivsr_model->nif) {
++                        //2.1 prepare dnn data into request
++                        av_assert0(av_fifo_can_read(ivsr_model->frame_queue) == ivsr_model->nif);
++                        AVFrame **input_frames = av_mallocz(sizeof(AVFrame *) * ivsr_model->nif);
++                        av_fifo_peek(ivsr_model->frame_queue, input_frames, ivsr_model->nif, 0);
++                        for (int idx = 0; idx < ivsr_model->nif; idx++) {
++                            //INFO: the 3 frames in frame_queue are: (N-2)th, (N-1)th, (N)th
++                            ff_proc_from_frame_to_dnn(input_frames[idx], &input, ivsr_model->model->filter_ctx);
++                            //convert to NCHW layout
++                            memcpy((uint8_t *)in_in_packed, (uint8_t *)input.data,
++                                   input.height * input.width * input.channels * sizeof(float));
++                            for (int pos = 0; pos < input.height * input.width; pos++) {
++                                for (int ch = 0; ch < input.channels; ch++) {
++                                    ((float *)input.data)[(ch * input.height * input.width + pos)] =
++                                        ((float *)in_in_packed)[(pos * input.channels + (input.channels - 1 - ch))];
++                                }
++                            }
++                            input.data += input.height * input.width * input.channels * sizeof(float);
++                        }
++                        input.data = in_data;
++                        //pop the (N-2)th frame from frame_queue and free it
++                        av_fifo_read(ivsr_model->frame_queue, &tmp_frame, 1);
++                        av_frame_unref(tmp_frame);
++                        av_frame_free(&tmp_frame);
++                        // INFO: for the last frame, peek_back and pop_front get the same frame, so don't have to handle EOS specifically
++                    } else {
++                        if(in_in_packed) av_free(in_in_packed);
++                        return DNN_MORE_FRAMES;
++                    }
+                 } else {
+                     // ff_proc_from_frame_to_dnn will perform normalization by calling
+                     // uint_y_to_float_y_wrapper in swscale_unscaled.c
+@@ -250,6 +316,11 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+                     }
+                 }
+             }
++            // pop "front" lltask from lltask_queue
++            // INFO: for TSENet, it points to (N-1)th frame; for other model, it points to (N)th frame.
++            lltask = ff_queue_pop_front(ivsr_model->lltask_queue);
++            request->lltasks[i] = lltask;
++            request->lltask_count = i + 1;
+         }
+         input.data =
+             (uint8_t *) input.data +
+@@ -292,6 +363,7 @@ static void infer_completion_callback(void *args)
+     case VIDEOPROC:
+     case EDSR:
+     case CUSTVSR:
++    case TSENET:
+         output.channels = dims[2];
+         output.height = dims[3];
+         output.width = dims[4];
+@@ -442,6 +514,13 @@ static int get_input_ivsr(void *model, DNNData * input,
+         input->width = dims[4];
+         input->dt = DNN_FLOAT;
+         break;
++    case TSENET:
++        //INFO:for TSENet, dims[2] == nif * channels, and nif==3
++        input->channels = dims[2] / 3;
++        input->height = dims[3];
++        input->width = dims[4];
++        input->dt = DNN_FLOAT;
++        break;
+     default:
+         av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
+         return DNN_GENERIC_ERROR;
+@@ -491,7 +570,10 @@ static int execute_model_ivsr(IVSRRequestItem * request,
+ 
+     if (task->async) {
+         ret = fill_model_input_ivsr(ivsr_model, request);
+-        if (ret != 0) {
++        //TSENet - according to return value, return or continue
++        if (ret == DNN_MORE_FRAMES) {
++            return ret;
++        } else if (ret != 0) {
+             goto err;
+         }
+         status =
+@@ -539,6 +621,7 @@ static int get_output_ivsr(void *model, const char *input_name,
+     case VIDEOPROC:
+     case EDSR:
+     case CUSTVSR:
++    case TSENET:
+         *output_height = dims[3];
+         *output_width = dims[4];
+         break;
+@@ -585,6 +668,10 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+     ivsr_model->ctx.class = &dnn_ivsr_class;
+     ctx = &ivsr_model->ctx;
+ 
++    ivsr_model->frame_queue = av_fifo_alloc2(4/*queue size*/, sizeof(AVFrame*), AV_FIFO_FLAG_AUTO_GROW);
++    if (!ivsr_model->frame_queue)
++        goto err;
++
+     // parse options
+     av_opt_set_defaults(ctx);
+     if (av_opt_set_from_string(ctx, options, NULL, "=", "&") < 0) {
+@@ -602,6 +689,10 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+         // the default value is a rough estimation
+         ctx->options.nireq = av_cpu_count() / 2 + 1;
+     }
++    //TODO: override the 2 values before async mode in iVSR SDK is supported
++    //"async == 1/TRUE" is misleading as it's actually not supported by SDK
++    ctx->options.nireq = 1;
++    ctx->options.async = 1;
+ 
+     ivsr_model->model_type = ctx->options.model_type;
+ 
+@@ -665,6 +756,9 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+     case CUSTVSR:
+         sprintf(shape_string, "1,1,%d,%d", frame_h, frame_w);
+         break;
++    case TSENET:
++        sprintf(shape_string, "1,9,%d,%d", frame_h, frame_w);
++        break;
+     default:
+         av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
+         return DNN_GENERIC_ERROR;
+@@ -713,6 +807,15 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+         goto err;
+     }
+ 
++    status = ivsr_get_attr(ivsr_model->handle, NUM_INPUT_FRAMES, &nif);
++    if (status != OK) {
++	        av_log(ctx, AV_LOG_ERROR, "Failed to get nif\n");
++	        goto err;
++	    }
++    ivsr_model->nif = nif;
++    //TODO: hard code nif for TSENET
++    if(ivsr_model->model_type == TSENET) ivsr_model->nif = 3;
++
+     status =
+         ivsr_get_attr(ivsr_model->handle, INPUT_TENSOR_DESC, input_dims);
+     if (status != OK) {
+@@ -742,6 +845,7 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+             goto err;
+         }
+ 
++        //TODO: assume batch_size==1
+         item->in_frames =
+             av_malloc(input_dims[0] * input_dims[1] * input_dims[2] *
+                       input_dims[3] * input_dims[4] * sizeof(float));
+@@ -767,6 +871,7 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+             goto err;
+         }
+ 
++        //TODO batch_size * nif?
+         item->lltasks =
+             av_malloc_array(ctx->options.batch_size,
+                             sizeof(*item->lltasks));
+@@ -837,6 +942,7 @@ int ff_dnn_execute_model_ivsr(const DNNModel * model,
+         return AVERROR(ENOMEM);
+     }
+ 
++    //TODO: for BasicVSR, queue nif task objects to lltask_queue?
+     ret = extract_lltask_from_task(task, ivsr_model->lltask_queue);
+     if (ret != 0) {
+         av_log(ctx, AV_LOG_ERROR,
+@@ -845,8 +951,11 @@ int ff_dnn_execute_model_ivsr(const DNNModel * model,
+     }
+ 
+     if (ctx->options.async) {
+-        while (ff_queue_size(ivsr_model->lltask_queue) >=
+-               ctx->options.batch_size) {
++        //TODO: batch mode support to be updated
++        //for TSENet, it will start inference for (N)th frame when (N+1)th frame arrives
++        //So lltask_queue may cache > batch_size frames
++        //while (ff_queue_size(ivsr_model->lltask_queue) >=
++        //       ctx->options.batch_size) {
+             request = ff_safe_queue_pop_front(ivsr_model->request_queue);
+             if (!request) {
+                 av_log(ctx, AV_LOG_ERROR,
+@@ -855,10 +964,14 @@ int ff_dnn_execute_model_ivsr(const DNNModel * model,
+             }
+ 
+             ret = execute_model_ivsr(request, ivsr_model->lltask_queue);
+-            if (ret != 0) {
++            if (ret == DNN_MORE_FRAMES) {
++                // push_front the request item as it was not processed
++                ff_safe_queue_push_front(ivsr_model->request_queue, request);
++                return 0;
++            } else if (ret != 0) {
+                 return ret;
+             }
+-        }
++        //}
+ 
+         return 0;
+     }
+@@ -876,12 +989,14 @@ DNNAsyncStatusType ff_dnn_get_result_ivsr(const DNNModel * model,
+ 
+ int ff_dnn_flush_ivsr(const DNNModel * model)
+ {
++    //TODO: update this API to handle EOS for BasicVSR
+     IVSRModel *ivsr_model = model->model;
+     IVSRContext *ctx = &ivsr_model->ctx;
+     IVSRRequestItem *request;
+     IVSRStatus status;
+     int ret;
+ 
++    //TODO: ivsr_process is actually sync, so flush_frame() will do nothing
+     if (ff_queue_size(ivsr_model->lltask_queue) == 0) {
+         // no pending task need to flush
+         return 0;
+@@ -894,7 +1009,9 @@ int ff_dnn_flush_ivsr(const DNNModel * model)
+     }
+ 
+     ret = fill_model_input_ivsr(ivsr_model, request);
+-    if (ret != 0) {
++    if (ret == DNN_MORE_FRAMES) {
++        return ret;
++    } else if (ret != 0) {
+         av_log(ctx, AV_LOG_ERROR, "Failed to fill model input.\n");
+         return ret;
+     }
+@@ -955,6 +1072,16 @@ void ff_dnn_free_model_ivsr(DNNModel ** model)
+             config = next;
+         }
+         //av_freep(&handle);
++
++        //free the cached frame in the queue
++        while (av_fifo_can_read(ivsr_model->frame_queue) > 0) {
++            AVFrame *frame = NULL;
++            av_fifo_read(ivsr_model->frame_queue, &frame, 1);
++            av_frame_unref(frame);
++            av_frame_free(&frame);
++        }
++        av_fifo_freep2(&ivsr_model->frame_queue);
++
+         av_freep(&ivsr_model);
+         av_freep(model);
+     }
+diff --git a/libavfilter/vf_dnn_processing.c b/libavfilter/vf_dnn_processing.c
+index 10be339e05..5208a72b6f 100644
+--- a/libavfilter/vf_dnn_processing.c
++++ b/libavfilter/vf_dnn_processing.c
+@@ -56,7 +56,7 @@ static const AVOption dnn_processing_options[] = {
+     { "ivsr",        "ivsr flag",                  0,                        AV_OPT_TYPE_CONST,     { .i64 = DNN_IVSR },    0, 0, FLAGS, "backend" },
+ #endif
+     DNN_COMMON_OPTIONS
+-    { "nif",         "number of input frames, NOT usable for BasicVSR model",     OFFSET(nif),              AV_OPT_TYPE_INT,       { .i64 = 3 },    1,      INT_MAX, FLAGS },
++    { "nif",         "number of input frames in batch sent to the DNN backend",     OFFSET(nif),              AV_OPT_TYPE_INT,       { .i64 = 1 },    1,      INT_MAX, FLAGS },
+     { NULL }
+ };
+ 
+-- 
+2.34.1
+
