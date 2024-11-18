@@ -13,6 +13,9 @@ on:
     branches: [ "master" ]
   schedule:
     - cron: '31 14 * * 2'
+env:
+  TRIVY_DB_REPOSITORY: ${{ steps.ecr-login.outputs.registry }}/github/aquasecurity/trivy-db:2
+  TRIVY_JAVA_DB_REPOSITORY: ${{ steps.ecr-login.outputs.registry }}/github/aquasecurity/trivy-java-db:1
 
 permissions:
   contents: read
