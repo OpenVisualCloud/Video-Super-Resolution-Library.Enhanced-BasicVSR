@@ -6,6 +6,7 @@
 [![License](https://img.shields.io/badge/license-BSD_3_Clause-stable.svg)](https://github.com/OpenVisualCloud/Video-Super-Resolution-Library.Enhanced-BasicVSR/blob/master/LICENSE.md)
 [![Contributions](https://img.shields.io/badge/contributions-welcome-blue.svg)](https://github.com/OpenVisualCloud/Video-Super-Resolution-Library.Enhanced-BasicVSR/wiki)
 [![Ubuntu-DockerFile-Build](https://github.com/OpenVisualCloud/Video-Super-Resolution-Library.Enhanced-BasicVSR/actions/workflows/ubuntu-build-docker.yml/badge.svg)](https://github.com/OpenVisualCloud/Video-Super-Resolution-Library.Enhanced-BasicVSR/actions/workflows/ubuntu-build-docker.yml)
+[![Trivy](https://github.com/OpenVisualCloud/Video-Super-Resolution-Library.Enhanced-BasicVSR/actions/workflows/trivy.yml/badge.svg)](https://github.com/OpenVisualCloud/Video-Super-Resolution-Library.Enhanced-BasicVSR/actions/workflows/trivy.yml)
 
 
 Video super resolution (VSR) is widely used in AI media enhancement domain to 
