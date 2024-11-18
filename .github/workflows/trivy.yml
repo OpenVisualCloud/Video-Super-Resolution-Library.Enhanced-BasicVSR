@@ -12,10 +12,10 @@ on:
     # The branches below must be a subset of the branches above
     branches: [ "master" ]
   schedule:
-    - cron: '31 14 * * 2'
-env:
-  TRIVY_DB_REPOSITORY: ${{ steps.ecr-login.outputs.registry }}/github/aquasecurity/trivy-db:2
-  TRIVY_JAVA_DB_REPOSITORY: ${{ steps.ecr-login.outputs.registry }}/github/aquasecurity/trivy-java-db:1
+    - cron: '31 17 * * 2'
+#env:
+  #TRIVY_JAVA_DB_REPOSITORY: github/aquasecurity/trivy-java-db:1
+  #TRIVY_DB_REPOSITORY: github/aquasecurity/trivy-db:2
 
 permissions:
   contents: read
@@ -43,6 +43,9 @@ jobs:
 
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@7b7aa264d83dc58691451798b4d117d53d21edfe
+        env:
+          TRIVY_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-db
+          TRIVY_JAVA_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-java-db
         with:
           image-ref: 'ffmpeg_ivsr_sdk_ov2022.3'
           format: 'template'
