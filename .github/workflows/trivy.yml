@@ -35,7 +35,9 @@ jobs:
       - name: Build an image from Dockerfile
         run: |
           # docker build -t docker.io/my-organization/my-app:${{ github.sha }} .
-          sudo docker system prune -a
+          sudo docker system prune -f
+          sudo docker image prune -f
+          sudo docker container prune -f
           sudo mkdir -p /etc/systemd/system/docker.service.d
           sudo systemctl daemon-reload
           sudo systemctl restart docker
@@ -49,8 +51,9 @@ jobs:
           TRIVY_JAVA_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-java-db
         with:
           image-ref: 'ffmpeg_ivsr_sdk_ov2022.3'
-          format: 'template'
-          template: '@/contrib/sarif.tpl'
+          #format: 'template'
+          #template: '@/contrib/sarif.tpl'
+          format: 'sarif'
           ignore-unfixed: true
           vuln-type: 'os,library'
           output: 'trivy-ivsr-results.sarif'
