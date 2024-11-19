@@ -43,7 +43,10 @@ jobs:
           sudo systemctl restart docker
           cd ./ivsr_ffmpeg_plugin
           ./build_docker.sh --enable_ov_patch true --ov_version 2022.3
-
+          
+      - name: Set up temporary directory for Trivy
+        run: mkdir -p /github/workspace/trivy-scan && echo "TRIVY_TMPDIR=/github/workspace/trivy-scan" >> $GITHUB_ENV
+        
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@7b7aa264d83dc58691451798b4d117d53d21edfe
         env:
