@@ -35,8 +35,8 @@ jobs:
       - name: Build an image from Dockerfile
         run: |
           # docker build -t docker.io/my-organization/my-app:${{ github.sha }} .
-          docker system prune -a
-          docker rmi ffmpeg_ivsr_sdk_ov2022.3
+          sudo docker system prune -a
+          sudo docker rmi ffmpeg_ivsr_sdk_ov2022.3
           sudo mkdir -p /etc/systemd/system/docker.service.d
           sudo systemctl daemon-reload
           sudo systemctl restart docker
