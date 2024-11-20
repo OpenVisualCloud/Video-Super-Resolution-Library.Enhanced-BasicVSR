@@ -80,9 +80,9 @@ jobs:
       shell: bash
       run: |
           sudo chmod a+x ./build_ivsr.sh
-          sudo ./build_ivsr.sh --enable_ov_patch true --enable_compile_ffmpeg true --ov_version 2022.3
+          sudo ./build_ivsr.sh --enable_ov_patch true --enable_compile_ffmpeg false --ov_version 2023.2
           #environment variables setting
-          sudo source ./ivsr_setupvar.sh --ov_version 2022.3
+          #source ./ivsr_setupvar.sh --ov_version 2023.2
           
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v3
