@@ -80,7 +80,7 @@ jobs:
       shell: bash
       run: |
           sudo chmod a+x ./build_ivsr.sh
-          sudo ./build_ivsr.sh --enable_ov_patch true --enable_compile_ffmpeg false --ov_version 2023.2
+          sudo ./build_ivsr.sh --enable_ov_patch false --enable_compile_ffmpeg false --ov_version 2023.2
           #environment variables setting
           #source ./ivsr_setupvar.sh --ov_version 2023.2
           
