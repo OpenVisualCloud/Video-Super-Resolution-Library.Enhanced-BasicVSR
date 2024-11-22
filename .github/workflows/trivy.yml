@@ -31,7 +31,19 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
+      - name: Check disk space
+        run: df -h
+      - name: Clear Git Untracked Files
+        run: |
+          git clean -fdx
+      - name: Clear GitHub Actions Cache
+        uses: actions/cache@v2
+        with:
+          key: ${{ runner.os }}-build-${{ hashFiles('**/lockfile') }}
+          path: |
+            node_modules
+            ~/Library/Caches/
+          action: clean
       - name: Build an image from Dockerfile
         run: |
           # docker build -t docker.io/my-organization/my-app:${{ github.sha }} .
@@ -43,11 +55,8 @@ jobs:
           sudo systemctl restart docker
           cd ./ivsr_ffmpeg_plugin
           ./build_docker.sh --enable_ov_patch true --ov_version 2022.3
-          
-      - name: Set up temporary directory for Trivy
-        run: |
-          sudo mkdir -p /github/workspace/trivy-scan
-          sudo echo "TRIVY_TMPDIR=/github/workspace/trivy-scan" >> $GITHUB_ENV
+          - name: Check disk space
+          run: df -h
         
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@7b7aa264d83dc58691451798b4d117d53d21edfe
