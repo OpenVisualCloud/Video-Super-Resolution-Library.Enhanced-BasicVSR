@@ -33,17 +33,17 @@ jobs:
         uses: actions/checkout@v4
       - name: Check disk space
         run: df -h
-      - name: Clear Git Untracked Files
-        run: |
-          git clean -fdx
-      - name: Clear GitHub Actions Cache
-        uses: actions/cache@v2
-        with:
-          key: ${{ runner.os }}-build-${{ hashFiles('**/lockfile') }}
-          path: |
-            node_modules
-            ~/Library/Caches/
-          action: clean
+      #- name: Clear Git Untracked Files
+        #run: |
+          # git clean -fdx
+      #- name: Clear GitHub Actions Cache
+       # uses: actions/cache@v2
+       # with:
+         # key: ${{ runner.os }}-build-${{ hashFiles('**/lockfile') }}
+         # path: |
+         #   node_modules
+         #   ~/Library/Caches/
+         # action: clean
       - name: Build an image from Dockerfile
         run: |
           # docker build -t docker.io/my-organization/my-app:${{ github.sha }} .
