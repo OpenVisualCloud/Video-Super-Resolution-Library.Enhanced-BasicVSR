@@ -1,0 +1,27 @@
+name: Build Dockerfiles Ubuntu
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+jobs:
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build the Docker image
+     # run: docker build . --file Dockerfile --tag my-image-name:$(date +%s)
+      run: |
+          sudo mkdir -p /etc/systemd/system/docker.service.d
+          sudo systemctl daemon-reload
+          sudo systemctl restart docker
+          cd ./ivsr_ffmpeg_plugin
+          ./build_docker.sh --enable_ov_patch true --ov_version 2022.3
