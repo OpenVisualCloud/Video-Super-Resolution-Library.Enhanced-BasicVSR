@@ -20,12 +20,16 @@ on:
       - '**/*.md'
       - '**/*.txt'
   schedule:
-    - cron: '19 6 * * 1'
+    - cron: '19 6 * * 0'
+    
+permissions:
+  contents: read    
 
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
-    runs-on: [ubuntu-latest]
+    runs-on: ${{ matrix.runner-os }}
+    
     # Runner size impacts CodeQL analysis time. To learn more, please see:
     #   - https://gh.io/recommended-hardware-resources-for-running-codeql
     #   - https://gh.io/supported-runners-and-hardware-resources
@@ -33,20 +37,19 @@ jobs:
     # Consider using larger runners or machines with greater resources for possible analysis time improvements.
     # runs-on: ${{ (matrix.language == 'swift' && 'macos-latest') || 'ubuntu-latest' }}
     permissions:
-      # required for all workflows
       security-events: write
-
       # required to fetch internal or private CodeQL packs
       packages: read
-
       # only required for workflows in private repositories
       actions: read
       contents: read
-
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
-        #include:
+        runner-os: [ 'ubuntu-22.04' ]
         language: [c-cpp]
         build-mode: [manual]
         # CodeQL supports the following values keywords for 'language': 'c-cpp', 'csharp', 'go', 'java-kotlin', 'javascript-typescript', 'python', 'ruby', 'swift'
@@ -62,7 +65,7 @@ jobs:
       uses: actions/checkout@v4
     - name: Check disk space
       run: df -h
-
+      
     # Initializes the CodeQL tools for scanning.
     - name: Initialize CodeQL
       uses: github/codeql-action/init@v3
@@ -82,11 +85,13 @@ jobs:
     # to build your code.
     # ℹ️ Command-line programs to run using the OS shell.
     # 📚 See https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idstepsrun
-    - if: matrix.build-mode == 'manual'
-      shell: bash
+    
+    # - if: matrix.build-mode == 'manual'
+    # shell: bash
+    - name: Build iVSR by Script
       run: |
           sudo chmod a+x ./build_ivsr.sh
-          sudo ./build_ivsr.sh --enable_ov_patch false --enable_compile_ffmpeg false --ov_version 2023.2
+          sudo ./build_ivsr.sh --enable_ov_patch true --enable_compile_ffmpeg true --ov_version 2022.3
           #environment variables setting
           #source ./ivsr_setupvar.sh --ov_version 2023.
           sudo df -h
