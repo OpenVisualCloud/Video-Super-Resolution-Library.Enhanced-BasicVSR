@@ -91,9 +91,7 @@ jobs:
     - name: Build iVSR by Script
       run: |
           sudo chmod a+x ./build_ivsr.sh
-          sudo ./build_ivsr.sh --enable_ov_patch true --enable_compile_ffmpeg true --ov_version 2022.3
-          #environment variables setting
-          #source ./ivsr_setupvar.sh --ov_version 2023.
+          sudo ./build_ivsr.sh --enable_ov_patch true --enable_compile_ffmpeg true --ov_version 2023.2
           sudo df -h
           echo ' build completed ！！！'
 
