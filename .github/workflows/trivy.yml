@@ -30,7 +30,8 @@ jobs:
     runs-on: "ubuntu-22.04"
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        # uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 #V4.2.2
       - name: Check disk space
         run: df -h
       - name: Build an image from Dockerfile
@@ -64,8 +65,8 @@ jobs:
           vuln-type: 'os,library'
           severity: 'CRITICAL, HIGH'
           output: 'trivy-ivsr-results.sarif'
-
       - name: Upload Trivy scan results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
+        # uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@b611370bb5703a7efb587f9d136a52ea24c5c38c # v3.25.11
         with:
           sarif_file: 'trivy-ivsr-results.sarif'
