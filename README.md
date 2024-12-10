@@ -1,6 +1,7 @@
-# Video-Super-Resolution-Library.Enhanced-BasicVSR
+## iVSR (Video-Super-Resolution)
 
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/OpenVisualCloud/iVSR/badge)](https://api.securityscorecards.dev/projects/github.com/OpenVisualCloud/iVSR)
+[![OpenSSF Best Practices](https://bestpractices.coreinfrastructure.org/projects/9795/badge)](https://bestpractices.coreinfrastructure.org/projects/9795)
 [![Dependency Review](https://github.com/OpenVisualCloud/Video-Super-Resolution-Library.Enhanced-BasicVSR/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/OpenVisualCloud/Video-Super-Resolution-Library.Enhanced-BasicVSR/actions/workflows/dependency-review.yml)
 [![CodeQL](https://github.com/OpenVisualCloud/Video-Super-Resolution-Library.Enhanced-BasicVSR/actions/workflows/codeql.yml/badge.svg)](https://github.com/OpenVisualCloud/Video-Super-Resolution-Library.Enhanced-BasicVSR/actions/workflows/codeql.yml)
 [![License](https://img.shields.io/badge/license-BSD_3_Clause-stable.svg)](https://github.com/OpenVisualCloud/Video-Super-Resolution-Library.Enhanced-BasicVSR/blob/master/LICENSE.md)
