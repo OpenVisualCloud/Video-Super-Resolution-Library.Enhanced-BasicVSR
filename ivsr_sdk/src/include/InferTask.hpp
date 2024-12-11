@@ -39,10 +39,10 @@ public:
     using QueueCallbackFunction = std::function<void(InferTask::Ptr)>;
     // construct function
     InferTask(char* inBuf, char* outBuf, QueueCallbackFunction callbackQueue, InferFlag flag, ivsr_cb_t* ivsr_cb)
-        : inputPtr_(inBuf),
-          outputPtr_(outBuf),
-          _callbackFunction(callbackQueue),
+        : _callbackFunction(callbackQueue),
           flag_(flag),
+          inputPtr_(inBuf),
+          outputPtr_(outBuf),
           cb(ivsr_cb) {}
 
     InferFlag getInferFlag() {

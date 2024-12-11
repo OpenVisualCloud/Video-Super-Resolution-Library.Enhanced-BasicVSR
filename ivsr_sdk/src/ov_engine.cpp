@@ -139,7 +139,7 @@ IVSRStatus ov_engine::init_impl() {
             hidden_tensor_shape[h_index] = input_shape[h_index].get_length() / 4;
             hidden_tensor_shape[w_index] = input_shape[w_index].get_length() / 4;
 
-            for (int i = 1; i < model->inputs().size(); ++i)
+            for (auto i = 1u; i < model->inputs().size(); ++i)
                 model->reshape({{model->inputs()[i].get_any_name(), hidden_tensor_shape}});
         }
     }
@@ -150,7 +150,7 @@ IVSRStatus ov_engine::init_impl() {
         std::map<std::string, std::string> tensor_names;
         const auto& inputs = model->inputs();
         const auto& outputs = model->outputs();
-        for (int i = 1; i < inputs.size(); ++i) {
+        for (auto i = 1u; i < inputs.size(); ++i) {
             std::string hidden_inp_name = inputs[i].get_any_name();
             std::string hidden_out_name = outputs[i].get_any_name();
             tensor_names[hidden_inp_name] = hidden_out_name;
@@ -362,7 +362,7 @@ IVSRStatus ov_engine::create_infer_requests_impl(size_t requests_num) {
         return GENERAL_ERROR;
     }
 
-    for (int id = requests_.size(); id < requests_num; ++id) {
+    for (auto id = requests_.size(); id < requests_num; ++id) {
         requests_.push_back(
             std::make_shared<inferReqWrap>(compiled_model_,
                                            id,

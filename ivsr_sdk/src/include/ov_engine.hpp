@@ -35,8 +35,8 @@ class inferReqWrap final {
 public:
     using Ptr = std::shared_ptr<inferReqWrap>;
     explicit inferReqWrap(ov::CompiledModel& model, size_t id, CallbackFunction callback)
-        : id_(id),
-          request_(model.create_infer_request()),
+        : request_(model.create_infer_request()),
+          id_(id),
           callback_(callback) {}
 
     void start_async() {
@@ -107,12 +107,12 @@ public:
               const tensor_desc_t output_tensor_desc)
         : engine(this),
           device_(device),
-          model_path_(model_path),
-          custom_lib_(custom_lib),
           configs_(configs),
           reshape_settings_(reshape_settings),
           input_tensor_desc_(input_tensor_desc),
-          output_tensor_desc_(output_tensor_desc) {
+          output_tensor_desc_(output_tensor_desc),
+          custom_lib_(custom_lib),
+          model_path_(model_path) {
         // init();
     }
 
@@ -127,11 +127,13 @@ public:
         static_assert(std::is_same<T, ov::Shape>::value || std::is_same<T, size_t>::value ||
                           std::is_same<T, tensor_desc_t>::value,
                       "get_attr() is only supported for 'ov::Shape' and 'size_t' types");
+/*
         auto extend_shape = [](ov::Shape& shape, size_t dims) {
             if (shape.size() < dims)
                 for (size_t i = shape.size(); i < dims; i++)
                     shape.insert(shape.begin(), 1);
         };
+*/
 
         if constexpr (std::is_same<T, tensor_desc_t>::value) {
             ov::Shape shape;
@@ -152,7 +154,7 @@ public:
             memcpy((char*)value.precision, element_type.c_str(), element_type.size());
             memcpy((char*)value.layout, layout.c_str(), layout.size());
             value.dimension = shape.size();
-            for (int i = 0; i < shape.size(); ++i) {
+            for (auto i = 0u; i < shape.size(); ++i) {
                 value.shape[i] = shape[i];
             }
         } else if constexpr (std::is_same<T, size_t>::value) {

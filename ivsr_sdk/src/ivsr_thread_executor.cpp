@@ -57,10 +57,10 @@ struct IVSRThreadExecutor::Impl {
 
     explicit Impl(const Config& config, engine<ov_engine>* engine)
         : _config{config},
-          _engine(engine),
           _streams([this] {
               return std::make_shared<Impl::Stream>(this);
-          }) {
+          }),
+          _engine(engine) {
         for (auto streamId = 0; streamId < _config._threads; ++streamId) {
             _threads.emplace_back([this, streamId] {
                 for (bool stopped = false; !stopped;) {

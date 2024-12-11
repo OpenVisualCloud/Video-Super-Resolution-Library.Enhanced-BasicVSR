@@ -52,8 +52,7 @@ private:
 
 public:
     engine(Derived* derived)
-        : _derived(derived),
-          init_func([=]() -> IVSRStatus {
+        : init_func([=]() -> IVSRStatus {
               return _derived->init_impl();
           }),
           run_func([=](InferTask::Ptr task) -> IVSRStatus {
@@ -70,7 +69,8 @@ public:
           }),
           get_infer_requests_size_func([=]() -> size_t {
               return _derived->get_infer_requests_size_impl();
-          }) {}
+          }),
+          _derived(derived) {}
     
     // Default constructor
     engine() = default;

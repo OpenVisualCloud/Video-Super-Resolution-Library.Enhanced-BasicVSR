@@ -77,7 +77,7 @@ void parse_engine_config(std::map<std::string, ov::AnyMap>& config,
     // remove the hardware devices if MULTI appears in the devices list.
     auto hardware_devices = devices;
     if (if_multi) {
-        ivsr_version_t version;
+        //ivsr_version_t version;
         ov::Version ov_version = ov::get_openvino_version();
         std::string ov_buildNumber = std::string(ov_version.buildNumber);
         // Parse out the currect virtual device as the target device.
@@ -211,8 +211,8 @@ struct ivsr {
           threadExecutor(executor),
           vsr_config(config),
           patchConfig(patch),
-          input_data_shape(std::move(shape)),
-          patchSolution(sol) {}
+          patchSolution(sol),
+          input_data_shape(std::move(shape)) {}
 };
 
 IVSRStatus ivsr_init(ivsr_config_t *configs, ivsr_handle *handle) {
@@ -464,7 +464,7 @@ IVSRStatus ivsr_process(ivsr_handle handle, char* input_data, char* output_data,
         }
 
         // Get data into infer task
-        for (int idx = 0; idx < patchList.size(); ++idx) {
+        for (auto idx = 0u; idx < patchList.size(); ++idx) {
 #ifdef ENABLE_LOG
             std::cout << "[Trace]: ivsr_process on patch: " << idx << std::endl;
 #endif
@@ -582,7 +582,7 @@ IVSRStatus ivsr_reconfig(ivsr_handle handle, ivsr_config_t* configs){
 
         // reconfig ov_engine ?
 
-    }catch(exception e){
+    } catch (const std::exception& e) {
         // std::cout << "Error in ivsr_reconfig" << std::endl;
         ivsr_status_log(IVSRStatus::EXCEPTION_ERROR, e.what());
         return IVSRStatus::UNKNOWN_ERROR;
@@ -653,7 +653,7 @@ IVSRStatus ivsr_deinit(ivsr_handle handle) {
             delete handle->threadExecutor;
             handle->threadExecutor = nullptr;
         }
-    } catch (exception e) {
+    } catch (const std::exception& e) {
         ivsr_status_log(IVSRStatus::EXCEPTION_ERROR, e.what());
         return IVSRStatus::UNKNOWN_ERROR;
     }
