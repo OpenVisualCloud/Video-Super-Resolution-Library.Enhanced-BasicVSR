@@ -1,0 +1,295 @@
+From 4adb708b409e8d4c0c07ee42c92d53a5315058d1 Mon Sep 17 00:00:00 2001
+From: Liang <xiaoxia.liang@intel.com>
+Date: Tue, 25 Jun 2024 22:58:36 +0800
+Subject: [PATCH] dnn_ivsr_backend: optimized layout conversion(nchw <-> nhwc)
+ with openmp.
+
+Signed-off-by: Liang <xiaoxia.liang@intel.com>
+---
+ libavfilter/dnn/dnn_backend_ivsr.c | 163 ++++++++++-------------------
+ 1 file changed, 58 insertions(+), 105 deletions(-)
+
+diff --git a/libavfilter/dnn/dnn_backend_ivsr.c b/libavfilter/dnn/dnn_backend_ivsr.c
+index d0f71e976d..80e8f61607 100644
+--- a/libavfilter/dnn/dnn_backend_ivsr.c
++++ b/libavfilter/dnn/dnn_backend_ivsr.c
+@@ -37,6 +37,7 @@
+ #include "ivsr.h"
+ #include "dnn_backend_common.h"
+ #include <string.h>
++#include <omp.h>
+ 
+ 
+ #define DNN_MORE_FRAMES FFERRTAG('M','O','R','E')
+@@ -126,6 +127,48 @@ static uint8_t clamp(uint8_t val, uint8_t min, uint8_t max) {
+         return val;
+ }
+ 
++static void convert_nchw_to_nhwc(void* data, int N, int C, int H, int W) {
++    int data_size = N * C * H * W;
++    void *temp = av_malloc(data_size * sizeof(float));
++    int max_threads = omp_get_num_procs() / 2;
++    // memory copy
++    #pragma omp parallel for num_threads(max_threads)
++    for (int i = 0; i < data_size; i++)
++        ((float *)temp)[i] = ((float *)data)[i];
++
++    // convert buffer from nchw to nhwc and reverse rgb to bgr
++    #pragma omp parallel num_threads(max_threads)
++    {
++        for (int n = 0; n < N; n++)
++            for (int h = omp_get_thread_num(); h < H; h += omp_get_num_threads())
++	        for (int w = 0; w < W; w++)
++	            for (int c = 0; c < C; c++)
++			((float *)data)[n * H * W * C + h * W * C + w * C + c] = ((float *)temp)[n * C * H * W + (C - 1 - c) * H * W + h * W + w];
++    }
++    av_free(temp);
++}
++
++static void convert_nhwc_to_nchw(void* data, int N, int C, int H, int W) {
++    int data_size = N * C * H * W;
++    void *temp = av_malloc(data_size * sizeof(float));
++    int max_threads = omp_get_num_procs() / 2;
++    // memory copy
++    #pragma omp parallel for num_threads(max_threads)
++    for (int i = 0; i < data_size; i++)
++        ((float *)temp)[i] = ((float *)data)[i];
++
++    // convert buffer from nhwc to nchw and reverse bgr to rgb
++    #pragma omp parallel num_threads(max_threads)
++    {
++        for (int n = 0; n < N; n++)
++	    for (int h = omp_get_thread_num(); h < H; h += omp_get_num_threads())
++		for (int w = 0; w < W; w++)
++		    for (int c = 0; c < C; c++)
++			((float *)data)[n * C * H * W + c * H * W + h * W + w] = ((float *)temp)[n * H * W * C + h * W * C + w * C + C - 1 - c];
++    }
++    av_free(temp);
++}
++
+ /* returns
+  *     DNN_GENERIC_ERROR,
+  *     DNN_MORE_FRAMES - waiting for more input frames,
+@@ -142,7 +185,6 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+     TaskItem *task;
+     AVFrame *tmp_frame = NULL;
+     void *in_data = NULL;
+-    void *in_in_packed = NULL;
+     int dims[5] = { 0, 0, 0, 0, 0 };
+     float normalize_factor = ctx->options.normalize_factor;
+ 
+@@ -186,15 +228,6 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+     input.mean = 0;
+     input.layout = DL_NONE;
+ 
+-    if (input.channels != 1) {
+-        in_in_packed =
+-            av_malloc(input.height * input.width * input.channels *
+-                      sizeof(float));
+-        if (!in_in_packed)
+-            return AVERROR(ENOMEM);
+-    }
+-
+-
+     for (int i = 0; i < ctx->options.batch_size; ++i) {
+         //INFO: for TSENET, lltask_queue contains (N-1)th and (N)th frames
+         //so peek (N)th frame.
+@@ -218,25 +251,7 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+                                                       ivsr_model->model->
+                                                       filter_ctx);
+                             // convert buffer from NHWC to NCHW when C != 1
+-                            if (input.channels != 1) {
+-                                memcpy((uint8_t *) in_in_packed,
+-                                        (uint8_t *) input.data,
+-                                        input.height * input.width *
+-                                        input.channels * sizeof(float));
+-                                for (int pos = 0;
+-                                    pos < input.height * input.width; pos++) {
+-                                    for (int ch = 0; ch < input.channels; ch++) {
+-                                        ((float *)
+-                                        input.data)[(ch * input.height *
+-                                                    input.width + pos)] =
+-                                            ((float *)
+-                                            in_in_packed)[(pos *
+-                                                            input.channels +
+-                                                            (input.channels -
+-                                                            1 - ch))];
+-                                    }
+-                                }
+-                            }
++                            convert_nhwc_to_nchw(input.data, 1, input.channels, input.height, input.width);
+                             input.data +=
+                                 input.height * input.width *
+                                 input.channels * sizeof(float);
+@@ -252,7 +267,6 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+                     //1. copy the input_frame(ref the buffer) and put into ivsr_model->fame_queue
+                     tmp_frame = av_frame_alloc();
+                     if(av_frame_ref(tmp_frame, task->in_frame) < 0) {
+-                        if(in_in_packed) av_free(in_in_packed);
+                         return AVERROR(ENOMEM);
+                     }
+ 
+@@ -262,7 +276,6 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+                         //For the first pic in the stream
+                         tmp_frame = av_frame_alloc();
+                         if(av_frame_ref(tmp_frame, task->in_frame) < 0) {
+-                            if(in_in_packed) av_free(in_in_packed);
+                             return AVERROR(ENOMEM);
+                         }
+                         av_fifo_write(ivsr_model->frame_queue, &tmp_frame, 1);
+@@ -277,15 +290,7 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+                         for (int idx = 0; idx < ivsr_model->nif; idx++) {
+                             //INFO: the 3 frames in frame_queue are: (N-2)th, (N-1)th, (N)th
+                             ff_proc_from_frame_to_dnn(input_frames[idx], &input, ivsr_model->model->filter_ctx);
+-                            //convert to NCHW layout
+-                            memcpy((uint8_t *)in_in_packed, (uint8_t *)input.data,
+-                                   input.height * input.width * input.channels * sizeof(float));
+-                            for (int pos = 0; pos < input.height * input.width; pos++) {
+-                                for (int ch = 0; ch < input.channels; ch++) {
+-                                    ((float *)input.data)[(ch * input.height * input.width + pos)] =
+-                                        ((float *)in_in_packed)[(pos * input.channels + (input.channels - 1 - ch))];
+-                                }
+-                            }
++                            convert_nhwc_to_nchw(input.data, 1, input.channels, input.height, input.width);
+                             input.data += input.height * input.width * input.channels * sizeof(float);
+                         }
+                         input.data = in_data;
+@@ -295,7 +300,6 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+                         av_frame_free(&tmp_frame);
+                         // INFO: for the last frame, peek_back and pop_front get the same frame, so don't have to handle EOS specifically
+                     } else {
+-                        if(in_in_packed) av_free(in_in_packed);
+                         return DNN_MORE_FRAMES;
+                     }
+                 } else {
+@@ -307,23 +311,13 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+                                               ivsr_model->model->
+                                               filter_ctx);
+                     if (input.channels != 1) {
+-                        // convert buffer from NHWC to NCHW and multiply normalize_factor
+-                        memcpy((uint8_t*)in_in_packed,
+-                                (uint8_t*)input.data,
+-                                input.height * input.width * input.channels * sizeof(float));
+-                        for (int pos = 0; pos < input.height * input.width; pos++) {
+-                            for (int ch = 0; ch < input.channels; ch++) {
+-                                ((float*)input.data)[(ch * input.height * input.width + pos)] =
+-                                    ((float*)in_in_packed)[(pos * input.channels + (input.channels - 1 - ch))] * normalize_factor;
+-                            }
+-                        }
+-                    } else if (normalize_factor != 1) {
++                        convert_nhwc_to_nchw(input.data, 1, input.channels, input.height, input.width);
++                    }
++                    if (normalize_factor != 1) {
+                         // do not need to covert buffer from NHWC to NCHW if the channels is 1, only need to mulitple normalize_factor
+-                        for (int pos = 0; pos < input.height * input.width; pos++) {
+-                            for (int ch = 0; ch < input.channels; ch++) {
+-                                ((float*)input.data)[(ch * input.height * input.width + pos)] =
+-                                    ((float*)input.data)[ch * input.height * input.width + pos] * normalize_factor;
+-                            }
++                        #pragma omp parallel for
++                        for (int pos = 0; pos < input.height * input.width * input.channels; pos++) {
++                            ((float*)input.data)[pos] = ((float*)input.data)[pos] * normalize_factor;
+                         }
+                     }
+                 }
+@@ -339,8 +333,6 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+             input.width * input.height * input.channels *
+             get_datatype_size(input.dt);
+     }
+-    if (in_in_packed)
+-        av_free(in_in_packed);
+     return 0;
+ }
+ 
+@@ -355,7 +347,6 @@ static void infer_completion_callback(void *args)
+     DNNData output;
+     IVSRContext *ctx = &ivsr_model->ctx;
+     AVFrame *tmp_frame = NULL;
+-    void *out_in_planar = NULL;
+     int offset = 0;
+     int dims[5] = { 0, 0, 0, 0, 0 };
+     float normalize_factor = ctx->options.normalize_factor;
+@@ -390,18 +381,6 @@ static void infer_completion_callback(void *args)
+     output.scale    = 0;
+     output.mean     = 0;
+     output.layout = DL_NONE;
+-    if (output.channels != 1) {
+-        out_in_planar =
+-            av_malloc(output.height * output.width * output.channels *
+-                    sizeof(float));
+-        if (!out_in_planar) {
+-                av_log(ctx, AV_LOG_ERROR,
+-                       "Failed to allocate array with %ld bytes!\n",
+-                       output.height * output.width * output.channels *
+-                       sizeof(float));
+-            return;
+-        }
+-    }
+ 
+     av_assert0(request->lltask_count <= dims[0]);
+     av_assert0(request->lltask_count >= 1);
+@@ -423,21 +402,7 @@ static void infer_completion_callback(void *args)
+                                          offset);
+                         if (ret == 0) {
+                             if (output.channels != 1) {
+-                                memcpy((uint8_t *) out_in_planar,
+-                                        (uint8_t *) output.data,
+-                                        output.height * output.width *
+-                                        output.channels * sizeof(float));
+-                                for (int pos = 0;
+-                                    pos < output.height * output.width;
+-                                    pos++) {
+-                                    for (int ch = 0; ch < output.channels;
+-                                        ch++) {
+-                                        ((float *)
+-                                        output.data)[(pos * output.channels +
+-                                                      ch)] = ((float *)
+-                                                              out_in_planar)[((output.channels - 1 - ch) * output.height * output.width + pos)];
+-                                    }
+-                                }
++                                convert_nchw_to_nhwc(output.data, 1, output.channels, output.height, output.width);
+                             }
+                             ff_proc_from_dnn_to_frame(tmp_frame, &output,
+                                                       &ivsr_model->model->
+@@ -460,23 +425,13 @@ static void infer_completion_callback(void *args)
+                 } else {
+                     if (output.channels != 1) {
+                         //convert buffer from NCHW to NHWC
+-                        memcpy((uint8_t*)out_in_planar,
+-                                (uint8_t*)output.data,
+-                                output.height * output.width * output.channels * sizeof(float));
+-                        for (int pos = 0; pos < output.height * output.width; pos++) {
+-                            for (int ch = 0; ch < output.channels; ch++) {
+-                                ((float*)output.data)[(pos * output.channels + ch)] =
+-                                    ((float*)
+-                                        out_in_planar)[((output.channels - 1 - ch) * output.height * output.width + pos)] / normalize_factor;
+-                            }
+-                        }
+-                    } else if (normalize_factor != 1) {
++                        convert_nchw_to_nhwc(output.data, 1, output.channels, output.height, output.width);
++                    }
++                    if (normalize_factor != 1) {
++                        #pragma omp parallel for
+                         // only need to devide by normalize_factor for channels = 1.
+-                        for (int pos = 0; pos < output.height * output.width; pos++) {
+-                            for (int ch = 0; ch < output.channels; ch++) {
+-                                ((float*)output.data)[(pos * output.channels + ch)] =
+-                                    ((float*)output.data)[pos * output.channels + ch] / normalize_factor;
+-                            }
++                        for (int pos = 0; pos < output.height * output.width * output.channels; pos++) {
++                            ((float*)output.data)[pos] = ((float*)output.data)[pos] / normalize_factor;
+                         }
+                     }
+                     ff_proc_from_dnn_to_frame(task->out_frame, &output,
+@@ -504,8 +459,6 @@ static void infer_completion_callback(void *args)
+             output.width * output.height * output.channels *
+             get_datatype_size(output.dt);
+     }
+-    if (out_in_planar)
+-        av_free(out_in_planar);
+ 
+     request->lltask_count = 0;
+     if (ff_safe_queue_push_back(requestq, request) < 0) {
+-- 
+2.34.1
+

@@ -39,10 +39,11 @@ const std::string keys =
     "{save_path         |./outputs| Optional. Path to a folder to save predictions.}"
     "{cldnn_config      | | Optional option. Required for GPU custom kernels. Absolute path to an .xml file with the kernels description.}"
     "{nig               |1| Optional. Number of input data groups for inference. }"
-    "{normalize_factor  |1.0| Optional. Normalization factor is equal to the value range required by models, default is 1.0. 255.0 for Enhanced EDSR, 1.0 for other models.}"
+    "{normalize_factor  |255.0| Optional. Normalization factor is equal to the value range required by models, default is 255.0.}"
     "{scale_factor      |2| Optional. The ratio of the size of the image before scaling (original size) to the size of the image after scaling (new size).}"
     "{precision         |f32| Optional. For inference precision.fp32:f32, fp16:f16, bf16:bf16}"
     "{reshape_values    | | Optional. Reshape network to fit the input image size. e.g. --reshape_values=\"(1,3,720,1280)\"}"
+    "{num_infer_req     | | Optional. Number of infer request number.}"
    ;
 
 bool checkPath(const std::string& path){
@@ -188,6 +189,33 @@ bool commandLineCheck(int argc, char**argv,std::string keys){
     return true;
 }
 
+void print_tensor_desc(const tensor_desc_t* tensor) {
+    if (!tensor) {
+        printf("Invalid tensor descriptor!\n");
+        return;
+    }
+
+    printf("Tensor Descriptor:\n");
+    printf("Precision: %s\n", tensor->precision);
+    printf("Layout: %s\n", tensor->layout);
+    printf("Tensor Color Format: %s\n", tensor->tensor_color_format);
+    printf("Model Color Format: %s\n", tensor->model_color_format);
+    printf("Scale: %.2f\n", tensor->scale);
+    printf("Dimension: %u\n", tensor->dimension);
+    printf("Shape: [");
+
+    for (uint8_t i = 0; i < tensor->dimension; i++) {
+        printf("%zu", tensor->shape[i]);
+        if (i < tensor->dimension - 1) {
+            printf(", ");
+        }
+    }
+
+    printf("]\n");
+}
+
+using IVSRFunction = std::function<IVSRStatus(ivsr_handle, char*, char*, ivsr_cb_t*)>;
+
 int main(int argc, char** argv){
     // -------- Parsing and validation of input arguments --------
     cv::CommandLineParser parser(argc, argv, keys);
@@ -203,7 +231,13 @@ int main(int argc, char** argv){
     bool save_predictions = parser.get<bool>("save_predictions");
     std::string save_path = parser.get<std::string>("save_path");
     float normalize_factor = parser.get<float>("normalize_factor");
-
+    const float NORMALFACTOR_MIN = 1.0;
+    const float NORMALFACTOR_MAX = 65535.0;
+    if(normalize_factor < NORMALFACTOR_MIN || normalize_factor > NORMALFACTOR_MAX)
+    {
+        std::cout << "Invalid normalize_factor value! Please enter a value between 1.0 and 255.0."<<std::endl;
+        return -1;
+    }
 
     // vsr scale
     int scaleFactor = parser.get<int>("scale_factor");
@@ -245,7 +279,7 @@ int main(int argc, char** argv){
 
     // 1. set ivsr config
     std::list<ivsr_config_t *> configs;
-    auto add_config = [&configs](IVSRConfigKey key, const char *value) {
+    auto add_config = [&configs](IVSRConfigKey key, const void *value) {
         auto new_config = new ivsr_config_t();
         new_config->key = key;
         new_config->value = value;
@@ -273,9 +307,39 @@ int main(int argc, char** argv){
     auto reshape_settings = parser.get<std::string>("reshape_values");
     if (!reshape_settings.empty()) add_config(IVSRConfigKey::RESHAPE_SETTINGS, reshape_settings.c_str());
 
+    auto nireq = parser.get<std::string>("num_infer_req");
+    if (!nireq.empty()) add_config(IVSRConfigKey::INFER_REQ_NUMBER, nireq.c_str());
+
     // in format "<width>,<height>"
     std::string input_res = std::to_string(frameWidth) + "," + std::to_string(frameHeight);
     add_config(IVSRConfigKey::INPUT_RES, input_res.c_str());
+
+    uint8_t dimension_set = 4;
+    std::string model_path_lower = model_path;
+    std::transform(model_path_lower.begin(), model_path_lower.end(), model_path_lower.begin(), ::tolower);
+    // basicvsr has 5 dimensions
+    if (model_path_lower.find("basicvsr") != std::string::npos) {
+        std::cout << "\"basicvsr\" is found in model_path." << std::endl;
+        dimension_set = 5;
+    }
+ 
+    tensor_desc_t input_tensor_desc_set = {.precision = "u8",
+                                           .layout = "NHWC",
+                                           .tensor_color_format = "BGR",
+                                           .model_color_format = "RGB",
+                                           .scale = normalize_factor,
+                                           .dimension = dimension_set,
+                                           .shape = {0, 0, 0, 0}};
+    tensor_desc_t output_tensor_desc_set = {.precision = "fp32",
+                                            .layout = "NCHW",
+                                            .tensor_color_format = {0},
+                                            .model_color_format = {0},
+                                            .scale = 0.0,
+                                            .dimension = dimension_set,
+                                            .shape = {0, 0, 0, 0}};
+
+    add_config(IVSRConfigKey::INPUT_TENSOR_DESC_SETTING, &input_tensor_desc_set);
+    add_config(IVSRConfigKey::OUTPUT_TENSOR_DESC_SETTING, &output_tensor_desc_set);
 
     // 2. initialize ivsr
     ivsr_handle handle = nullptr;
@@ -284,6 +348,12 @@ int main(int argc, char** argv){
         std::cout <<"Failed to initialize ivsr engine!" <<std::endl;
         return -1;
     }
+
+    tensor_desc_t input_tensor_desc_get = {0}, output_tensor_desc_get = {0};
+    ivsr_get_attr(handle, INPUT_TENSOR_DESC, &input_tensor_desc_get);
+    ivsr_get_attr(handle, OUTPUT_TENSOR_DESC, &output_tensor_desc_get);
+    print_tensor_desc(&input_tensor_desc_get);
+    print_tensor_desc(&output_tensor_desc_get);
 
     int nif = 0;
     res = ivsr_get_attr(handle, IVSRAttrKey::NUM_INPUT_FRAMES, &nif);
@@ -318,9 +388,9 @@ int main(int argc, char** argv){
         /* how to check image size and model input? */
 
         // refer to cv::dnn::blobFromImages
-        cv::Mat inputNCHW = blobFromImages(inMatList, normalize_factor/255.0, true);
-        int sz[] = { 1, nif, 3, oriHeight, oriWidth };
-        cv::Mat inputImg(5, sz, CV_32F, (char *)inputNCHW.data);
+        cv::Mat inputNHWC = inMatList[0]; //blobFromImages(inMatList, normalize_factor/255.0, true);
+        int sz[] = { 1, nif, oriHeight, oriWidth, 3 };
+        cv::Mat inputImg(5, sz, CV_8U, (char *)inputNHWC.data);
         inputDataList.push_back(inputImg.clone());
 
         int outputSize[] = {1, nif, 3, oriHeight * scaleFactor, oriWidth * scaleFactor};
@@ -334,18 +404,20 @@ int main(int argc, char** argv){
 #ifdef ENABLE_PERF
     auto totalStartTime = Time::now();
 #endif
-    for (; id < inputDataList.size() && id < outputDataList.size();id++){
+
+    IVSRFunction process_fn = nireq.empty() ? ivsr_process : ivsr_process_async;
+    for (; id < inputDataList.size() && id < outputDataList.size(); id++) {
         auto inputImg = inputDataList[id];
         auto outputImg = outputDataList[id];
         ivsr_cb_t cb;
         auto startTime = Time::now();
-        callback_args cb_args(0,nif,startTime);
+        callback_args cb_args(0, nif, startTime);
         cb.ivsr_cb = completion_callback;
         cb.args = (void*)(&cb_args);
         // 4. inference
-        auto result = ivsr_process(handle, (char *)inputImg.data, (char *)outputImg.data, &cb);
-        if(result < 0){
-            std::cout <<"Failed to process the inference on input data seq." << id <<std::endl;
+        IVSRStatus result = process_fn(handle, (char*)inputImg.data, (char*)outputImg.data, &cb);
+        if (result < 0) {
+            std::cout << "Failed to process the inference on input data seq." << id << std::endl;
         }
     }
 
@@ -359,36 +431,37 @@ int main(int argc, char** argv){
     std::cout << "[PERF] " << "Total latency for all input groups: " << double_to_string(duration) <<"ms"<<std::endl;
     std::cout << "[PERF] " << "Average throughput for all input groups: " << double_to_string(nig * nif * 1000.0 / duration) <<"FPS"<<std::endl;
 #endif
-
     std::cout << "[INFO] " << "Inference finished" << std::endl;
 
     // save outputs
-    if(save_predictions) {
-        if(save_path == ""){
+    if (save_predictions) {
+        if (save_path == "") {
             std::cout << "save_path is needed!" << std::endl;
             return -1;
         }
-        std::cout << "[INFO] " << " Saving outputs to path: " << save_path <<std::endl;
-        for (size_t idx = 0; idx < outputDataList.size(); idx++){
+        std::cout << "[INFO] "
+                  << " Saving outputs to path: " << save_path << std::endl;
+        for (size_t idx = 0; idx < outputDataList.size(); idx++) {
             // 5. post process and save outputs
             auto outputImg = outputDataList[idx];
-            outputImg.convertTo(outputImg, CV_8U, 255.0/normalize_factor);
+            outputImg.convertTo(outputImg, CV_8U, normalize_factor);
             int nchwSize[] = {nif, 3, oriHeight * scaleFactor, oriWidth * scaleFactor};
-            cv::Mat outputNCHW(4, nchwSize, CV_8U, (void *)outputImg.data);
+            cv::Mat outputNCHW(4, nchwSize, CV_8U, (void*)outputImg.data);
             std::vector<cv::Mat> outMatList;
             imagesFromBlob(outputNCHW, outMatList);
 
             // save group
-            for(int i = 0; i < nif; i ++){
+            for (int i = 0; i < nif; i++) {
                 std::string filePath = save_path + "/" + filePathList[idx * nif + i];
 #ifdef ENABLE_LOG
-            std::cout << "[Trace]: " << "Saving image: " << filePath <<std::endl;
+                std::cout << "[Trace]: "
+                          << "Saving image: " << filePath << std::endl;
 #endif
                 cv::imwrite(filePath, outMatList[i]);
-
             }
         }
     }
+
     //release resources
     res = ivsr_deinit(handle);
     if(res < 0){

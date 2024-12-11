@@ -1,0 +1,65 @@
+From be7d4bd47ed80fe4a0590c782b09587c4819a396 Mon Sep 17 00:00:00 2001
+From: Jerry Dong <jerry.dong@intel.com>
+Date: Wed, 18 Sep 2024 12:44:34 +0800
+Subject: [PATCH] refine RESHAPE_SETTINGS; support Y-input SVP model
+
+---
+ libavfilter/dnn/dnn_backend_ivsr.c | 18 ++++++++++++------
+ 1 file changed, 12 insertions(+), 6 deletions(-)
+
+diff --git a/libavfilter/dnn/dnn_backend_ivsr.c b/libavfilter/dnn/dnn_backend_ivsr.c
+index 44d603190c..e7e1d5ea2a 100644
+--- a/libavfilter/dnn/dnn_backend_ivsr.c
++++ b/libavfilter/dnn/dnn_backend_ivsr.c
+@@ -950,10 +950,15 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+     {
+     case BASICVSR:
+     case EDSR:
+-    case VIDEOPROC:
+     case TSENET:
+         strcpy(input_tensor_desc_set.model_color_format, "RGB");
+         break;
++    case VIDEOPROC:
++        if (desc->flags & AV_PIX_FMT_FLAG_RGB)
++            strcpy(input_tensor_desc_set.model_color_format, "RGB");
++        else
++            strcpy(input_tensor_desc_set.model_color_format, "I420_Three_Planes");
++        break;
+     case CUSTVSR:
+         strcpy(input_tensor_desc_set.model_color_format, "I420_Three_Planes");
+         break;
+@@ -969,25 +974,26 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+     if (config_nireq == NULL)
+         goto err;
+ 
++    //TODO: reshape setting follows NHW layout. Hardcode the batch_size as 1.
+     char shape_string[40] = {0};
+     switch (ivsr_model->model_type) {
+     case BASICVSR:
+-        sprintf(shape_string, "1,3,3,%d,%d", frame_h, frame_w);
++        sprintf(shape_string, "1,%d,%d", frame_h, frame_w);
+         break;
+     case VIDEOPROC:
+         // the input resoultion required 8-aligned
+         frame_h = (frame_h + ALIGNED_SIZE - 1) / ALIGNED_SIZE * ALIGNED_SIZE;
+         frame_w = (frame_w + ALIGNED_SIZE - 1) / ALIGNED_SIZE * ALIGNED_SIZE;
+-        sprintf(shape_string, "1,3,%d,%d", frame_h, frame_w);
++        sprintf(shape_string, "1,%d,%d", frame_h, frame_w);
+         break;
+     case EDSR:
+-        sprintf(shape_string, "1,3,%d,%d", frame_h, frame_w);
++        sprintf(shape_string, "1,%d,%d", frame_h, frame_w);
+         break;
+     case CUSTVSR:
+-        sprintf(shape_string, "1,1,%d,%d", frame_h, frame_w);
++        sprintf(shape_string, "1,%d,%d", frame_h, frame_w);
+         break;
+     case TSENET:
+-        sprintf(shape_string, "1,9,%d,%d", frame_h, frame_w);
++        sprintf(shape_string, "1,%d,%d", frame_h, frame_w);
+         break;
+     default:
+         av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
+-- 
+2.34.1
+

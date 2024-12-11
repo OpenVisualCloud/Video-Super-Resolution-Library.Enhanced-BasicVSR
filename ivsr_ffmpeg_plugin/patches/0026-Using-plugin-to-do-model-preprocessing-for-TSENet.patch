@@ -1,0 +1,169 @@
+From 163300648bc861dc781c43e5a5d64985e5992386 Mon Sep 17 00:00:00 2001
+From: Jerry Dong <jerry.dong@intel.com>
+Date: Tue, 19 Nov 2024 14:10:45 +0800
+Subject: [PATCH] Using plugin to do model preprocessing for TSENet.
+
+---
+ libavfilter/dnn/dnn_backend_ivsr.c | 40 ++++++++++++++++++++----------
+ libavfilter/dnn/dnn_io_proc.c      |  9 ++++---
+ 2 files changed, 32 insertions(+), 17 deletions(-)
+
+diff --git a/libavfilter/dnn/dnn_backend_ivsr.c b/libavfilter/dnn/dnn_backend_ivsr.c
+index 246fe5eb2b..4a0fab99cd 100644
+--- a/libavfilter/dnn/dnn_backend_ivsr.c
++++ b/libavfilter/dnn/dnn_backend_ivsr.c
+@@ -103,6 +103,7 @@ static const AVOption dnn_ivsr_options[] = {
+     { "extension",  "extension lib file full path, usable for BasicVSR model", OFFSET(options.extension),  AV_OPT_TYPE_STRING,    { .str = NULL },     0, 0, FLAGS},
+     { "op_xml",  "custom op xml file full path, usable for BasicVSR model", OFFSET(options.op_xml),  AV_OPT_TYPE_STRING,    { .str = NULL },     0, 0, FLAGS},
+     { "model_type",  "dnn model type", OFFSET(options.model_type),  AV_OPT_TYPE_INT,    { .i64 = 0 },     0, MODEL_TYPE_NUM - 1, FLAGS},
++    //TODO: replace "normalize_factor" with "scale" as defined in openvino backend
+     { "normalize_factor", "normalization factor", OFFSET(options.normalize_factor), AV_OPT_TYPE_FLOAT, { .dbl = 1.0 }, 1.0, 65535.0, FLAGS},
+     { NULL }
+ };
+@@ -323,9 +324,10 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+ 
+     input.data = request->in_frames;
+     in_data = input.data;
++    //scale/mean can't be retrieved, so they're 0.0 by default
+     // ff_proc_from_frame_to_dnn: uint_8->uint8 requires scale == 1 and mean == 0 and dt == UINT8
+-    input.scale = 1;
+-    input.mean = 0;
++    input.scale = input.dt == DNN_UINT8 ? 1.0f : 0.0f;
++    input.mean  = 0.0f;
+ 
+     ctx->model_input_height = input.height;
+     ctx->model_input_width = input.width;
+@@ -370,7 +372,7 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+                                                       ivsr_model->model->
+                                                       filter_ctx);
+                             // convert buffer from NHWC to NCHW when C != 1
+-                            if (input.layout != 1 && input.layout == DL_NONE )
++                            if (input.channels != 1 && input.layout == DL_NONE )
+                                 convert_nhwc_to_nchw(input.data, 1, input.channels, input.height, input.width, input.dt);
+                             input.data +=
+                                 input.height * input.width *
+@@ -410,7 +412,9 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+                         for (int idx = 0; idx < ivsr_model->nif; idx++) {
+                             //INFO: the 3 frames in frame_queue are: (N-2)th, (N-1)th, (N)th
+                             ff_proc_from_frame_to_dnn(input_frames[idx], &input, ivsr_model->model->filter_ctx);
+-                            convert_nhwc_to_nchw(input.data, 1, input.channels, input.height, input.width, input.dt);
++                            //NHWC->NCHW was processed in ff_proc_from_frame_to_dnn() if input.layout is set
++                            if (input.channels != 1 && input.layout == DL_NONE )
++                                convert_nhwc_to_nchw(input.data, 1, input.channels, input.height, input.width, input.dt);
+                             input.data += input.height * input.width * input.channels * get_datatype_size(input.dt);
+                         }
+                         input.data = in_data;
+@@ -434,8 +438,8 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+                         convert_nhwc_to_nchw(input.data, 1, input.channels, input.height, input.width, input.dt);
+                     }
+ 
+-                    if (normalize_factor != 1 && input.dt == DNN_FLOAT
+-                            && (input.scale > 1 || input.scale == 0)) {
++                    if (normalize_factor != 1 && input.dt == DNN_FLOAT &&
++                        (fabsf(input.scale - 1.0f) > 1e-6f || fabsf(input.scale) < 1e-6f)) {
+                         // do not need to covert buffer from NHWC to NCHW if the channels is 1, only need to mulitple normalize_factor
+                         #pragma omp parallel for
+                         for (int pos = 0; pos < input.height * input.width * input.channels; pos++) {
+@@ -490,9 +494,10 @@ static void infer_completion_callback(void *args)
+     set_dnndata_info(&output, &output_tensor_desc_get);
+ 
+     output.data = request->out_frames;
+-    output.mean     = 0;
++    //scale/mean can't be retrieved, so they're 0.0 by default
++    output.mean     = 0.0f;
+     // ff_proc_from_dnn_to_frame: float->uint8 require (scale == 255 or scale == 0) and mean == 0
+-    output.scale    = output.dt == DNN_UINT8 ? 1 : 0;
++    output.scale    = output.dt == DNN_UINT8 ? 1.0f : 0.0f;
+     // set order based on model type
+     switch (ivsr_model->model_type)
+     {
+@@ -555,8 +560,8 @@ static void infer_completion_callback(void *args)
+                         convert_nchw_to_nhwc(output.data, 1, output.channels, output.height, output.width, output.dt);
+                     }
+ 
+-                    if (normalize_factor != 1 && output.dt == DNN_FLOAT
+-                            && (output.scale > 1 || output.scale == 0)) {
++                    if (normalize_factor != 1 && output.dt == DNN_FLOAT &&
++                        (fabsf(output.scale - 1.0f) > 1e-6f || fabsf(output.scale) < 1e-6f)) {
+                         #pragma omp parallel for
+                         // only need to devide by normalize_factor for channels = 1.
+                         for (int pos = 0; pos < output.height * output.width * output.channels; pos++) {
+@@ -890,6 +895,9 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+         .scale = 0.0,
+         .dimension = 4,
+         .shape = {0, 0, 0, 0}};
++
++    // Through the setting of input/output_tensor_desc_set, we can config where
++    // to do the pre-processing, in plugin or in SDK(openvino).
+     // set element type according to bit depth of frame
+     const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(inlink->format);
+     switch (desc->comp[0].depth)
+@@ -904,13 +912,19 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+     default:
+         break;
+     }
+-    // set layout for Basic_VSR
++    // customize layout for Basic_VSR and TSENet
+     if (ivsr_model->model_type == BASICVSR) {
+         strcpy(input_tensor_desc_set.layout, "NFHWC");
+         strcpy(output_tensor_desc_set.layout, "NFHWC");
++    } else if (ivsr_model->model_type == TSENET) {
++        //For TSENet, it's not typical N'C'HW, so do the NHWC->NCHW transion in plugin
++        strcpy(input_tensor_desc_set.layout, "NCHW");
++        strcpy(input_tensor_desc_set.precision, "fp32");
+     }
+-    // set scale
+-    if (fabsf(ctx->options.normalize_factor - 1) < 1e-6f) {
++    // set scale for non-float type of input
++    if (fabsf(ctx->options.normalize_factor - 1) < 1e-6f &&
++        (strcmp(input_tensor_desc_set.precision, "u8")  == 0 ||
++         strcmp(input_tensor_desc_set.precision, "u16") == 0)) {
+         switch (desc->comp[0].depth)
+         {
+         case 8:
+diff --git a/libavfilter/dnn/dnn_io_proc.c b/libavfilter/dnn/dnn_io_proc.c
+index 8dec6d97be..09fea90e20 100644
+--- a/libavfilter/dnn/dnn_io_proc.c
++++ b/libavfilter/dnn/dnn_io_proc.c
+@@ -285,9 +285,10 @@ int ff_proc_from_frame_to_dnn(AVFrame *frame, DNNData *input, void *log_ctx)
+     else if (fabsf(input->scale - 1) < 1e-6f && fabsf(input->mean) < 1e-6 && input->dt == DNN_UINT16)
+         dst_fmt = comp_desc->depth == 10 ? AV_PIX_FMT_GRAY10 : AV_PIX_FMT_GRAY16;
+     /* (scale == 255 or scale == 0) and mean == 0 and dt == FLOAT: normalization */
++    //TODO: compare with "255" doesn't cover 10-bit case
+     else if ((fabsf(input->scale - 255) < 1e-6f || fabsf(input->scale) < 1e-6f) &&
+              fabsf(input->mean) < 1e-6 && input->dt == DNN_FLOAT)
+-        dst_fmt = AV_PIX_FMT_GRAYF32;
++        dst_fmt = AV_PIX_FMT_GRAYF32; //float, 0.0f ~ 1.0f
+     else {
+         av_log(log_ctx, AV_LOG_ERROR, "dnn_process input data doesn't support type: UINT8 "
+                                       "scale: %f, mean: %f\n", input->scale, input->mean);
+@@ -296,7 +297,6 @@ int ff_proc_from_frame_to_dnn(AVFrame *frame, DNNData *input, void *log_ctx)
+ 
+     src_data = (void **)frame->data;
+     linesize[0] = frame->linesize[0];
+-    plane_size = linesize[0] * frame->height;
+ 
+     switch (frame->format) {
+     case AV_PIX_FMT_RGB48LE:
+@@ -306,6 +306,9 @@ int ff_proc_from_frame_to_dnn(AVFrame *frame, DNNData *input, void *log_ctx)
+         if (input->layout == DL_NCHW) {
+             av_assert0(comp_desc->depth == 8 || comp_desc->depth == 16);
+             mdl_fmt = comp_desc->depth == 8 ? AV_PIX_FMT_GBRP : AV_PIX_FMT_GBRP16LE;
++            int middle_data_linesize[4] = {0};
++            ret = av_image_fill_linesizes(middle_data_linesize, mdl_fmt, frame->width);
++            plane_size = middle_data_linesize[0] * frame->height;
+             middle_data = av_malloc(plane_size * input->channels);
+             if (!middle_data) {
+                 ret = AVERROR(ENOMEM);
+@@ -340,8 +343,6 @@ int ff_proc_from_frame_to_dnn(AVFrame *frame, DNNData *input, void *log_ctx)
+                 return AVERROR(ENOSYS);
+             }
+ 
+-            int middle_data_linesize[4] = {0};
+-            ret = av_image_fill_linesizes(middle_data_linesize, mdl_fmt, frame->width);
+             sws_scale(sws_ctx, (const uint8_t * const *)frame->data,
+                       frame->linesize, 0, frame->height, planar_data,
+                       middle_data_linesize);
+-- 
+2.34.1
+

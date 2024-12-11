@@ -40,15 +40,12 @@ struct IVSRThreadExecutor::Impl {
                     _impl->_streamIdQueue.pop();
                 }
             }
-            
-
         }
         ~Stream() {
             {
                 std::lock_guard<std::mutex> lock{_impl->_streamIdMutex};
                 _impl->_streamIdQueue.push(_streamId);
             }
-
         }
 
         Impl* _impl = nullptr;
@@ -56,12 +53,11 @@ struct IVSRThreadExecutor::Impl {
         int _numaNodeId = 0;
         bool _execute = false;
         std::queue<Task> _taskQueue;
-        
     };
 
     explicit Impl(const Config& config, engine<ov_engine>* engine)
         : _config{config},
-        _engine(engine),
+          _engine(engine),
           _streams([this] {
               return std::make_shared<Impl::Stream>(this);
           }) {
@@ -71,7 +67,7 @@ struct IVSRThreadExecutor::Impl {
                     Task task;
                     {
                         std::unique_lock<std::mutex> lock(_mutex);
-      			_queueCondVar.wait(lock, [&] {
+                        _queueCondVar.wait(lock, [&] {
                             return !_taskQueue.empty() || (stopped = _isStopped);
                         });
                         if (!_taskQueue.empty()) {
@@ -81,7 +77,8 @@ struct IVSRThreadExecutor::Impl {
                     }
                     if (task) {
 #ifdef ENABLE_LOG
-                        std::cout << "[Trace]: " << "Thread " << std::this_thread::get_id() << " get task and execute it" << std::endl;
+                        std::cout << "[Trace]: "
+                                  << "Thread " << std::this_thread::get_id() << " get task and execute it" << std::endl;
 #endif
                         Execute(task, *(_streams.local()));
                     }
@@ -94,22 +91,29 @@ struct IVSRThreadExecutor::Impl {
         {
             std::lock_guard<std::mutex> lock(_mutex);
             _taskQueue.emplace(task);
-	    _startTime = std::min(Time::now(), _startTime);
+            _startTime = std::min(Time::now(), _startTime);
         }
         _queueCondVar.notify_one();
 #ifdef ENABLE_LOG
-        std::cout << "[Trace]: " << "Enqueue Task into queue and notify 1 / " << _taskQueue.size() << std::endl;
-#endif 
+        std::cout << "[Trace]: "
+                  << "Enqueue Task into queue and notify 1 / " << _taskQueue.size() << std::endl;
+#endif
     }
 
     void Execute(const Task& task, Stream& stream) {
         _engine->run(task);
     }
 
-    Task CreateTask(char* inBuf, char* outBuf, InferFlag flag) {
-        Task task = std::make_shared<InferTask>(inBuf, outBuf,  std::bind(&IVSRThread::IVSRThreadExecutor::Impl::competition_call_back, this), flag);
+    Task CreateTask(char* inBuf, char* outBuf, InferFlag flag, ivsr_cb_t* cb) {
+        Task task = std::make_shared<InferTask>(
+            inBuf,
+            outBuf,
+            std::bind(&IVSRThread::IVSRThreadExecutor::Impl::competition_call_back, this, std::placeholders::_1),
+            flag,
+            cb);
         return task;
     }
+
     void Defer(Task task) {
         auto& stream = *(_streams.local());
         stream._taskQueue.push(std::move(task));
@@ -127,11 +131,10 @@ struct IVSRThreadExecutor::Impl {
     }
 
     void sync(int size) {
-	std::unique_lock<std::mutex> lock(_mutex);
-    _taskCondVar.wait(lock,[&] {
-                             return (_cb_counter == size);
+        std::unique_lock<std::mutex> lock(_mutex);
+        _taskCondVar.wait(lock, [&] {
+            return (_cb_counter == size);
         });
-
     }
 
     void reset() {
@@ -139,13 +142,16 @@ struct IVSRThreadExecutor::Impl {
         _cb_counter = 0;
     }
 
-    void competition_call_back() {
+    void competition_call_back(Task task) {
         std::unique_lock<std::mutex> lock(_mutex);
-      	_cb_counter++;
-	      _endTime = std::max(Time::now(), _endTime);
+        _cb_counter++;
+        _endTime = std::max(Time::now(), _endTime);
+        if (task->cb) {
+            task->cb->ivsr_cb(task->cb->args);
+        }
         _taskCondVar.notify_one();
     }
-    
+
     double get_duration_in_milliseconds() {
         return std::chrono::duration_cast<ns>(_endTime - _startTime).count() * 0.000001;
     }
@@ -161,14 +167,14 @@ struct IVSRThreadExecutor::Impl {
     int _cb_counter = 0;
     std::queue<Task> _taskQueue;
     bool _isStopped = false;
-    ThreadLocal<std::shared_ptr<Stream>> _streams; 
+    ThreadLocal<std::shared_ptr<Stream>> _streams;
     engine<ov_engine>* _engine;
     Time::time_point _startTime = Time::time_point::max();
-    Time::time_point _endTime = Time::time_point::min();    
+    Time::time_point _endTime = Time::time_point::min();
 };
 
-
-IVSRThreadExecutor::IVSRThreadExecutor(const Config& config, engine<ov_engine>* engine) : _impl{new Impl{config, engine}} {}
+IVSRThreadExecutor::IVSRThreadExecutor(const Config& config, engine<ov_engine>* engine)
+    : _impl{new Impl{config, engine}} {}
 
 IVSRThreadExecutor::~IVSRThreadExecutor() {
     {
@@ -195,8 +201,8 @@ void IVSRThreadExecutor::Enqueue(Task task) {
     }
 }
 
-Task IVSRThreadExecutor::CreateTask(char* inBuf, char* outBuf, InferFlag flag) {
-    Task task = _impl->CreateTask(inBuf, outBuf, flag);
+Task IVSRThreadExecutor::CreateTask(char* inBuf, char* outBuf, InferFlag flag, ivsr_cb_t *cb) {
+    Task task = _impl->CreateTask(inBuf, outBuf, flag, cb);
     return task;
 }
 
@@ -206,6 +212,6 @@ void IVSRThreadExecutor::wait_all(int patchSize) {
 }
 
 double IVSRThreadExecutor::get_duration_in_milliseconds() {
-        return _impl->get_duration_in_milliseconds();
+    return _impl->get_duration_in_milliseconds();
 }
 }  // namespace IVSRThread

@@ -1,5 +1,17 @@
 # iVSR Release Notes
 
+# Next Release
+
+## New and Changes
+
+## Bug Fixes
+
+## Known Limitations/Issues
+- If the model-guard protected model is loaded, it prints the following *error* messages. They can be ignored as its normal procedure for this kind of model files.<br>
+[libprotobuf ERROR thirdparty/protobuf/protobuf/src/google/protobuf/text_format.cc:335] Error parsing text-format tensorflow.GraphDef: 1:2: Message type "tensorflow.GraphDef" has no field named "T".<br>
+[libprotobuf ERROR thirdparty/protobuf/protobuf/src/google/protobuf/text_format.cc:335] Error parsing text-format tensorflow.GraphDef: 1:2: Message type "tensorflow.GraphDef" has no field named "T".
+
+
 # Release v24.05
 
 ## New and Changes in v24.05

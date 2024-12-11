@@ -5,16 +5,16 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --ov_version)
             shift
-            if [ "$1" = "2022.3" ] || [ "$1" = "2023.2" ]; then
+            if [ "$1" = "2022.3" ] || [ "$1" = "2023.2" ] || [ "$1" = "2024.5" ]; then
                 OV_VERSION=$1
             else
-                echo "Usage: $0  --ov_version [2022.3|2023.2]"
+                echo "Usage: $0  --ov_version [2022.3|2023.2|2024.5]"
                 exit 1
             fi
             shift
             ;;
         *)
-            echo "Usage: $0  --ov_version [2022.3|2023.2]"
+            echo "Usage: $0  --ov_version [2022.3|2023.2|2024.5]"
             exit 1
             ;;
     esac

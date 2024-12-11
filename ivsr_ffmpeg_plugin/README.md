@@ -25,30 +25,34 @@ Additionally, there are other parameters that you can use. These parameters are 
 
 Here are some examples of FFmpeg command lines to run inference with the supported models using the `ivsr` backend.<br>
 
-- Command sample to run Enhanced BasicVSR inference, the input pixel format supported by the model is `bgr24`.
+- Command sample to run Enhanced BasicVSR inference, the input pixel format supported by the model is `rgb24`.
 ```
 cd <iVSR project path>/ivsr_ffmpeg_plugin/ffmpeg
-./ffmpeg -i <your test video> -vf format=bgr24,dnn_processing=dnn_backend=ivsr:model=<basic_vsr_model.xml>:input=input:output=output:nif=3:backend_configs='device=<CPU or GPU>&extension=<iVSR project path>/ivsr_ov/based_on_openvino_2022.3/openvino/bin/intel64/Release/libcustom_extension.so&op_xml=<iVSR project path>/ivsr_ov/based_on_openvino_2022.3/openvino/flow_warp_cl_kernel/flow_warp.xml' test_out.mp4
+./ffmpeg -i <your test video> -vf format=rgb24,dnn_processing=dnn_backend=ivsr:model=<basic_vsr_model.xml>:input=input:output=output:nif=3:backend_configs='device=<CPU or GPU>&extension=<iVSR project path>/ivsr_ov/based_on_openvino_2022.3/openvino/bin/intel64/Release/libcustom_extension.so&op_xml=<iVSR project path>/ivsr_ov/based_on_openvino_2022.3/openvino/flow_warp_cl_kernel/flow_warp.xml' test_out.mp4
 ```
 Please note that for the Enhanced BasicVSR model, you need to set the `extension` and `op_xml` options (with `backend_configs`) in the command line. After applying OpenVINO's patches and building OpenVINO, the extension lib file is located in `<OpenVINO folder>/openvino/bin/intel64/Release/libcustom_extension.so`, and the op xml file is located in `<OpenVINO folder>/openvino/flow_warp_cl_kernel/flow_warp.xml`.<br>
 
-- Command sample to run SVP models inference
+- Command sample to run SVP models inference. If the supported input pixel format of the model variance is `rgb24`, set the preceeding format as is to avoid unnecessary layout conversion:
 ```
 cd <iVSR project path>/ivsr_ffmpeg_plugin/ffmpeg
-./ffmpeg -i <your test video> -vf format=bgr24,dnn_processing=dnn_backend=ivsr:model=<svp_model.xml>:input=input:output=output:nif=1:backend_configs='device=<CPU or GPU>&model_type=1' -pix_fmt yuv420p test_out.mp4
+./ffmpeg -i <your test video> -vf format=rgb24,dnn_processing=dnn_backend=ivsr:model=<svp_model.xml>:input=input:output=output:nif=1:backend_configs='device=<CPU or GPU>&model_type=1' -pix_fmt yuv420p test_out.mp4
 ```
-- Command sample to run Enhanced EDSR inference
+If the model variance supports Y-input, set the preceeding format as YUV:
+```
+./ffmpeg -i <your test video> -vf format=yuv420p,dnn_processing=dnn_backend=ivsr:model=<svp_model.xml>:input=input:output=output:nif=1:backend_configs='device=<CPU or GPU>&model_type=1' -pix_fmt yuv420p test_out.mp4
+```
+- Command sample to run Enhanced EDSR inference, the input pixel format supported by the model is `rgb24`.
 ```
 cd <iVSR project path>/ivsr_ffmpeg_plugin/ffmpeg
-./ffmpeg -i <your test video> -vf format=bgr24,dnn_processing=dnn_backend=ivsr:model=<edsr_model.xml>:input=input:output=output:nif=1:backend_configs='device=<CPU or GPU>&model_type=2&normalize_factor=255.0' -pix_fmt yuv420p test_out.mp4
+./ffmpeg -i <your test video> -vf format=rgb24,dnn_processing=dnn_backend=ivsr:model=<edsr_model.xml>:input=input:output=output:nif=1:backend_configs='device=<CPU or GPU>&model_type=2&normalize_factor=255.0' -pix_fmt yuv420p test_out.mp4
 ```
-- Command sample to run CUSTOM VSR inference. Note the input pixel format supported by this model is `yuv420p`.
+- Command sample to run CUSTOM VSR inference. Note the input pixel format supported by this model is `yuv420p`, and its input shape is `[1, (Y channel)1, H, W]`, output shape is `[1, 1, 2xH, 2xW]`.
 ```
 cd <iVSR project path>/ivsr_ffmpeg_plugin/ffmpeg
 ./ffmpeg -i <your test video> -vf format=yuv420p,dnn_processing=dnn_backend=ivsr:model=<customvsr_model.xml>:input=input:output=output:nif=1:backend_configs='nireq=1&device=CPU&model_type=3' -pix_fmt yuv420p test_out.mp4
 ```
-- Command sample to run TSENet model
+- Command sample to run TSENet model, the input pixel format supported by the model is `rgb24`.
 ```
 cd <iVSR project path>/ivsr_ffmpeg_plugin/ffmpeg
-./ffmpeg -i <your test video> -vf format=bgr24,dnn_processing=dnn_backend=ivsr:model=<tsenet_model.xml>:input=input:output=output:nif=1:backend_configs='device=<CPU or GPU>&model_type=4' -pix_fmt yuv420p test_out.mp4
+./ffmpeg -i <your test video> -vf format=rgb24,dnn_processing=dnn_backend=ivsr:model=<tsenet_model.xml>:input=input:output=output:nif=1:backend_configs='device=<CPU or GPU>&model_type=4' -pix_fmt yuv420p test_out.mp4
 ```

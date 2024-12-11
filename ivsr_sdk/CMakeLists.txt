@@ -4,7 +4,7 @@
 cmake_minimum_required(VERSION 3.10)
 
 project(IVSR DESCRIPTION "Intel Video Super Resolution SDK")
-
+include(GNUInstallDirs)
 set(OUTPUT_FOLDER ${CMAKE_CURRENT_SOURCE_DIR})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_FOLDER}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${OUTPUT_FOLDER}/lib)
@@ -13,10 +13,19 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${OUTPUT_FOLDER}/lib)
 set(SDK_PRIVATE_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/privates/include)
 
 add_subdirectory(src)
-add_subdirectory(samples)
-#add_subdirectory(tools)
 add_subdirectory(privates)
+
+if(ENABLE_SAMPLE)
+    add_subdirectory(samples)
+endif()
 
 if(ENABLE_TEST)
     add_subdirectory(test)
 endif()
+
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/"
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+    FILES_MATCHING PATTERN "*.h"
+)
+
+install(TARGETS ivsr LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}" ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}" RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")

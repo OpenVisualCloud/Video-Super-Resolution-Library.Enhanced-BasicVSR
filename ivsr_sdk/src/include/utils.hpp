@@ -25,6 +25,7 @@
 #include <chrono>
 #include <iomanip>
 #include <iostream>
+#include <unordered_map>
 #include <string>
 #include <vector>
 
@@ -68,28 +69,29 @@ inline std::vector<std::string> split(const std::string& s, char delim) {
 };
 
 inline void ivsr_status_log(IVSRStatus status, const char* log) {
-    switch (status) {
-    case IVSRStatus::GENERAL_ERROR:
-        std::cout << "[General Error] NULL pointer exception " << log << "." << std::endl;
-        break;
-    case IVSRStatus::UNSUPPORTED_KEY:
-        std::cout << "[Error] Unsupported keys " << log << ", please check the input keys." << std::endl;
-        break;
-    case IVSRStatus::UNSUPPORTED_CONFIG:
-        std::cout << "[Error] Unsupported configs " << log << ", please check the input configs." << std::endl;
-        break;
-    case IVSRStatus::UNKNOWN_ERROR:
-        std::cout << "[Unknown Error] Process failed " << log << "." << std::endl;
-        break;
-    case IVSRStatus::EXCEPTION_ERROR:
-        std::cout << "[Exceptoin] Exception occurred " << log << "." << std::endl;
-        break;
-    case IVSRStatus::UNSUPPORTED_SHAPE:
-        std::cout << "[Error] Unsupported input shape " << log << ", please check the input frame's size." << std::endl;
-        break;
+    static const std::unordered_map<IVSRStatus, std::string> status_messages = {
+        {IVSRStatus::GENERAL_ERROR, "[General Error] Generic error occurred"},
+        {IVSRStatus::UNSUPPORTED_KEY, "[Error] Unsupported keys"},
+        {IVSRStatus::UNSUPPORTED_CONFIG, "[Error] Unsupported configs"},
+        {IVSRStatus::UNKNOWN_ERROR, "[Unknown Error] Process failed"},
+        {IVSRStatus::EXCEPTION_ERROR, "[Exception] Exception occurred"},
+        {IVSRStatus::UNSUPPORTED_SHAPE, "[Error] Unsupported input shape"}
+    };
 
-    default:
-        break;
+    auto it = status_messages.find(status);
+    if (it != status_messages.end()) {
+        std::cout << it->second << " " << log;
+
+        // Additional messages for specific statuses
+        if (status == IVSRStatus::UNSUPPORTED_KEY) {
+            std::cout << ", please check the input keys.";
+        } else if (status == IVSRStatus::UNSUPPORTED_CONFIG) {
+            std::cout << ", please check the input configs.";
+        } else if (status == IVSRStatus::UNSUPPORTED_SHAPE) {
+            std::cout << ", please check the input frame's size.";
+        }
+
+        std::cout << "." << std::endl;
     }
 }
 

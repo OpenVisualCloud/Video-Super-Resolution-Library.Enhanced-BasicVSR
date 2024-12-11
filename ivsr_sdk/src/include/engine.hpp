@@ -1,16 +1,16 @@
 /********************************************************************************
-* INTEL CONFIDENTIAL
-* Copyright (C) 2023 Intel Corporation
-*
-* This software and the related documents are Intel copyrighted materials,
-* and your use of them is governed by the express license under
-* which they were provided to you ("License").Unless the License
-* provides otherwise, you may not use, modify, copy, publish, distribute, disclose or
-* transmit this software or the related documents without Intel's prior written permission.
-*
-* This software and the related documents are provided as is,
-* with no express or implied warranties, other than those that are expressly stated in the License.
-*******************************************************************************/
+ * INTEL CONFIDENTIAL
+ * Copyright (C) 2023 Intel Corporation
+ *
+ * This software and the related documents are Intel copyrighted materials,
+ * and your use of them is governed by the express license under
+ * which they were provided to you ("License").Unless the License
+ * provides otherwise, you may not use, modify, copy, publish, distribute, disclose or
+ * transmit this software or the related documents without Intel's prior written permission.
+ *
+ * This software and the related documents are provided as is,
+ * with no express or implied warranties, other than those that are expressly stated in the License.
+ *******************************************************************************/
 
 /**
  * @file engine.h
@@ -21,65 +21,92 @@
 #ifndef COMMON_ENGINE_HPP
 #define COMMON_ENGINE_HPP
 
-#include "utils.hpp"
-#include "InferTask.hpp"
+#include <functional>
+#include <memory>
 #include <string>
 #include <vector>
-#include <memory>
-#include <functional>
+
+#include "InferTask.hpp"
+#include "utils.hpp"
 
 using namespace std;
 
-template<typename Derived>
+template <typename Derived>
 class engine {
 private:
-    // Function objects for type-erased calls to interface methods
-    std::function<IBasicVSRStatus()> init_func;
-    std::function<IBasicVSRStatus(InferTask::Ptr task)> run_func;
-    std::function<void()> wait_all_func;
+    using InitFunc = std::function<IVSRStatus()>;
+    using RunFunc = std::function<IVSRStatus(InferTask::Ptr)>;
+    using ProcFunc = std::function<IVSRStatus(void*, void*, void*)>;
+    using WaitAllFunc = std::function<void()>;
+    using CreateInferRequestsFunc = std::function<IVSRStatus(size_t)>;
+    using GetInferRequestsSizeFunc = std::function<size_t()>;
+
+    InitFunc init_func;
+    RunFunc run_func;
+    ProcFunc proc_func;
+    WaitAllFunc wait_all_func;
+    CreateInferRequestsFunc create_infer_requests_func;
+    GetInferRequestsSizeFunc get_infer_requests_size_func;
+
     Derived* _derived = nullptr;
 
 public:
-    // Template constructor binds the provided methods of the derived engine implementation
     engine(Derived* derived)
         : _derived(derived),
-          init_func([=]() -> IBasicVSRStatus { return _derived->init_impl(); }),
-          run_func([=](InferTask::Ptr task) -> IBasicVSRStatus { return _derived->run_impl(task); }),
-          wait_all_func([=]() { _derived->wait_all_impl(); })
-    {}
-
+          init_func([=]() -> IVSRStatus {
+              return _derived->init_impl();
+          }),
+          run_func([=](InferTask::Ptr task) -> IVSRStatus {
+              return _derived->run_impl(task);
+          }),
+          proc_func([=](void* input, void* output, void* cb) -> IVSRStatus {
+              return _derived->process_impl(input, output, cb);
+          }),
+          wait_all_func([=]() {
+              _derived->wait_all_impl();
+          }),
+          create_infer_requests_func([=](size_t requests_num) -> IVSRStatus {
+              return _derived->create_infer_requests_impl(requests_num);
+          }),
+          get_infer_requests_size_func([=]() -> size_t {
+              return _derived->get_infer_requests_size_impl();
+          }) {}
+    
+    // Default constructor
     engine() = default;
 
-    // Public interface methods call the type-erased std::function members
-    IBasicVSRStatus init() {
+    IVSRStatus init() {
         return init_func();
     }
 
-    IBasicVSRStatus run(InferTask::Ptr task) {
+    IVSRStatus run(InferTask::Ptr task) {
         return run_func(task);
     }
 
-    // The templated get_attr method delegates to the derived class's method
+    IVSRStatus proc(void* input_data, void* output_data, void* cb) {
+        return proc_func(input_data, output_data, cb);
+    }
+
     template <typename T>
-    IBasicVSRStatus get_attr(const std::string& key, T& value) {
-        // Using CRTP style static_cast to delegate to the actual implementation provided by the derived class
-        // For this to work, the derived class must implement get_attr_impl with the appropriate signature
+    IVSRStatus get_attr(const std::string& key, T& value) {
         return _derived->get_attr_impl(key, value);
     }
 
     void wait_all() {
-        wait_all_func();
+        return wait_all_func();
     }
 
-    Derived* get_impl() const { return _derived; }
-
-    IBasicVSRStatus create_infer_requests(size_t requests_num) {
-        return _derived->create_infer_requests_impl(requests_num);
+    IVSRStatus create_infer_requests(size_t requests_num) {
+        return create_infer_requests_func(requests_num);
     }
 
     size_t get_infer_requests_size() {
-        return _derived->get_infer_requests_size_impl();
+        return get_infer_requests_size_func();
+    }
+
+    Derived* get_impl() const {
+        return _derived;
     }
 };
 
-#endif //COMMON_ENGINE_HPP
+#endif  // COMMON_ENGINE_HPP
