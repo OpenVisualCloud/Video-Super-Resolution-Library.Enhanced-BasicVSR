@@ -44,7 +44,7 @@ jobs:
           sudo systemctl daemon-reload
           sudo systemctl restart docker
           cd ./ivsr_ffmpeg_plugin
-          ./build_docker.sh --enable_ov_patch false
+          ./build_docker.sh --ov_version 2024.5s
       - name: Check disk space
         run: df -h
         
@@ -55,7 +55,7 @@ jobs:
           TRIVY_JAVA_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-java-db
         with:
           scan-type: 'image'
-          image-ref: 'ffmpeg_ivsr_sdk_ov2022.3'
+          image-ref: 'ffmpeg_ivsr_sdk_ubuntu22_ov2024.5s'
           #format: 'template'
           #template: '@/contrib/sarif.tpl'
           security-checks: vuln
