@@ -84,7 +84,7 @@ cd <workspace>/ivsr/ivsr_ffmpeg_plugin/ffmpeg
 git checkout n6.1
 
 # Apply patches
-copy -rf /path/to/patches/*.patch .
+cp -rf <workspace>/ivsr/ivsr_ffmpeg_plugin/patches/*.patch .
 git am --whitespace=fix *.patch
 
 ./configure \
