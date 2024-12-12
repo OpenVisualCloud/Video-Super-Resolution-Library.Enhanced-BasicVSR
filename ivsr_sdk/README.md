@@ -147,8 +147,8 @@ IVSRStatus ivsr_get_attr(ivsr_handle handle, IVSRAttrKey key, void* value);
     |Key name|Description|
     |:--|:--|
     |IVSR_VERSION|Use this key to get ivsr version.|
-    |INPUT_TENSOR_DESC|Use this key to get model input shape.|
-    |OUTPUT_TENSOR_DESC|Use this key to get model output shape.|
+    |INPUT_TENSOR_DESC|Use this key to get model input tensor description includes precision, layout and shape information.|
+    |OUTPUT_TENSOR_DESC|Use this key to get model output description includes precision, layout and shape information.|
     |NUM_INPUT_FRAMES|Use this key to get input frames number of the model.|
     |INPUT_DIMS|Use this key to get input dims of the model.|
     |OUTPUT_DIMS|Use this key to get input dims of the model.|
@@ -191,7 +191,7 @@ The method deinitializes the handle and releases the resources allocated for iVS
 ##  **VSR Sample**
 
 
-There is a simple C++ sample to perform BasicVSR/EDSR/SVP inference on OpenVINO backend. You can reach the sample from `<iVSR project path>/ivsr_sdk/bin/vsr_sample`. You can get the help messages by running `./vsr_sample -h`  and see the default settings of parameters.
+There is a simple C++ sample to perform BasicVSR/EDSR/SVP inference on OpenVINO backend. Please add CMake option **-DENABLE_SAMPLE=ON** and build/install its dependency `OpenCV` component befor that. You can reach the sample from `<iVSR project path>/ivsr_sdk/bin/vsr_sample`. You can get the help messages by running `./vsr_sample -h`  and see the default settings of parameters.
 
 |Option name|Desciption|Default value|Recommended value(s)|
 |:--|:--|:--|:--|
@@ -205,7 +205,7 @@ There is a simple C++ sample to perform BasicVSR/EDSR/SVP inference on OpenVINO 
 |save_path|Optional. Path to save predictions.|./outputs|If use the default value, make sure default path exists.|
 |save_predictions|Optional. Whether to save the results to save_path.|false|If this option exists, results will be saved.|
 |scale_factor|Optional. The ratio of the size of the image before scaling (original size) to the size of the image after scaling (new size).|2|For image enhancement model and if no resolution change, please set to 1.|
-|normalize_factor|Optional. Normalization factor is equal to the value range required by models.|1.0|255.0 for Enhanced EDSR, 1.0 for other models.|
+|normalize_factor|Optional. Normalization factor is equal to the value range required by models.|255.0|Must set to 1.0 for Enhanced EDSR.|
 |precision |Required for inference precision setting, but runtime precision you need to check with your HW platform.|f32|f32[FP32], f16[FP16], bf16[bf16].|
 |reshape_values|Optional. Reshape the network to fit the input image size. |None|Set the complete tensor value of the shape. e.g. --reshape_values="(1,3,720,1280)" in case your input image happens to be 1280x720 RGB 24bits|
 
@@ -225,7 +225,7 @@ cd <iVSR project path>/ivsr_sdk/bin
 ###  **Enhanced EDSR model Sample**
 ```bash
 cd <iVSR project path>/ivsr_sdk/bin
-./vsr_sample --model_path=[your EDSR model.xml] --data_path=[folder contains low resolution images]  --nig=1 --device=GPU  --normalize_factor=255.0 --precision=f16 #need to set normalize_factor as 225.0
+./vsr_sample --model_path=[your EDSR model.xml] --data_path=[folder contains low resolution images]  --nig=1 --device=GPU  --normalize_factor=1.0 --precision=f16 #need to set normalize_factor as 1.0
 ```
 ### **SVP models Sample**
 ```bash

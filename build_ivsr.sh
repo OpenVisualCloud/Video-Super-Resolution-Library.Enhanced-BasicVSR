@@ -6,7 +6,7 @@ PROJECTDIR=${PWD}
 usage() {
     echo "Usage: $0  --enable_ov_patch [true|false]
                         --enable_compile_ffmpeg [true|false]
-                        --ov_version [2022.3|2023.2]"
+                        --ov_version [2022.3|2023.2|2024.5]"
     exit 1
 }
 
@@ -40,7 +40,7 @@ while [ $# -gt 0 ]; do
       ;;
     --ov_version)
         shift
-        if [ "$1" = "2022.3" ] || [ "$1" = "2023.2" ]; then
+        if [ "$1" = "2022.3" ] || [ "$1" = "2023.2" ] || [ "$1" = "2024.5" ]; then
           OV_VERSION=$1
         else
           usage
@@ -55,9 +55,9 @@ while [ $# -gt 0 ]; do
   shift # Move to the next argument
 done
 
-if [ "$OV_VERSION" = "2023.2" ]; then
+if [ "$OV_VERSION" != "2022.3" ]; then
     ENABLE_OV_PATCH="false"
-    echo "There is no openvino patches for openvino 2023.2 version, will ignore the setting of ENABLE_OV_PATCH"
+    echo "There is no openvino patches for openvino $OV_VERSION, will ignore the setting of ENABLE_OV_PATCH"
 fi
 
 
@@ -92,8 +92,8 @@ apt-get update && DEBIAN_FRONTEND=noninteractive && apt-get install -y --no-inst
         python3-dev libpython3-dev python3-pip
 
 apt-get clean
-pip --no-cache-dir install --upgrade pip setuptools
-pip install numpy
+pip --no-cache-dir install --upgrade pip==23.0 setuptools==65.5.0
+pip install numpy==1.23.5
 
 
 
@@ -142,8 +142,8 @@ if [ "$OV_VERSION" = "2022.3" ]; then
     apt-get clean
 fi
 
-## 3.2-2 BKC for OV2023.2
-if [ "$OV_VERSION" = "2023.2" ]; then
+## 3.2-2 BKC for other OV versions
+if [ "$OV_VERSION" != "2022.3" ]; then
   apt-get update
   apt-get install -y vainfo clinfo
   apt-get install -y --no-install-recommends ocl-icd-libopencl1
@@ -241,7 +241,8 @@ cd ${IVSR_SDK_DIR}/build
 cmake .. \
   -DENABLE_LOG=OFF -DENABLE_PERF=OFF -DENABLE_THREADPROCESS=ON \
   -DCMAKE_BUILD_TYPE=Release
-make
+make -j $(nproc --all)
+make install
 echo "Build ivsr sdk finished."
 
 
@@ -289,9 +290,9 @@ if ${ENABLE_COMPILE_FFMPEG}; then
   export LD_LIBRARY_PATH=${IVSR_SDK_DIR}/lib:${CUSTOM_IE_LIBDIR}:${TBB_DIR}/../lib:"$LD_LIBRARY_PATH"
   cd ${FFMPEG_DIR}
   ./configure \
+  --extra-cflags=-fopenmp \
+  --extra-ldflags=-fopenmp \
   --enable-libivsr \
-  --extra-cflags=-I${IVSR_SDK_DIR}/include/ \
-  --extra-ldflags=-L${IVSR_SDK_DIR}/lib \
   --disable-static \
   --disable-doc \
   --enable-shared \

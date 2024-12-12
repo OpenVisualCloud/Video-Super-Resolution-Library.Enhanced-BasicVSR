@@ -1,0 +1,227 @@
+From d50841f2a463d0d4c6ec03c6ddbb7327f0f8a00a Mon Sep 17 00:00:00 2001
+From: LinXie <linxie@intel.com>
+Date: Fri, 23 Aug 2024 15:08:26 +0000
+Subject: [PATCH] Enable async request infer and refine the config setting
+
+---
+ libavfilter/dnn/dnn_backend_ivsr.c | 123 +++++++++++------------------
+ 1 file changed, 48 insertions(+), 75 deletions(-)
+
+diff --git a/libavfilter/dnn/dnn_backend_ivsr.c b/libavfilter/dnn/dnn_backend_ivsr.c
+index 6f2f5f0f07..1f7dfff743 100644
+--- a/libavfilter/dnn/dnn_backend_ivsr.c
++++ b/libavfilter/dnn/dnn_backend_ivsr.c
+@@ -423,7 +423,6 @@ static void infer_completion_callback(void *args)
+     av_assert0(request->lltask_count >= 1);
+     for (int i = 0; i < request->lltask_count; ++i) {
+         task = request->lltasks[i]->task;
+-        task->inference_done++;
+ 
+         if (task->do_ioproc) {
+             if (ivsr_model->model->frame_post_proc != NULL) {
+@@ -490,6 +489,7 @@ static void infer_completion_callback(void *args)
+             task->out_frame->height = output.height;
+         }
+ 
++        task->inference_done++;
+         av_freep(&request->lltasks[i]);
+         output.data =
+             (uint8_t *) output.data +
+@@ -599,8 +599,8 @@ static int execute_model_ivsr(IVSRRequestItem * request,
+             goto err;
+         }
+         status =
+-            ivsr_process(ivsr_model->handle, request->in_frames,
+-                         request->out_frames, &request->cb);
++            ivsr_process_async(ivsr_model->handle, request->in_frames,
++                               request->out_frames, &request->cb);
+         if (status != OK) {
+             av_log(ctx, AV_LOG_ERROR,
+                    "Failed to process the inference on input data seq\n");
+@@ -658,6 +658,22 @@ static int get_output_ivsr(void *model, const char *input_name,
+     return ret;
+ }
+ 
++// Utility function to create and link config
++static ivsr_config_t* create_and_link_config(ivsr_config_t *previous,
++                                             int key, char *value, void *ctx) {
++    ivsr_config_t *config = av_mallocz(sizeof(ivsr_config_t));
++    if (config == NULL) {
++        av_log(ctx, AV_LOG_ERROR, "Failed to malloc config\n");
++        return NULL;
++    }
++    config->key = key;
++    config->value = value;
++    if (previous != NULL) {
++        previous->next = config;
++    }
++    return config;
++}
++
+ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+                                  DNNFunctionType func_type,
+                                  const char *options,
+@@ -667,12 +683,12 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+     IVSRModel *ivsr_model = NULL;
+     IVSRContext *ctx = NULL;
+     IVSRStatus status;
+-    ivsr_config_t *config = NULL;
+     ivsr_config_t *config_device = NULL;
+     ivsr_config_t *config_customlib = NULL;
+     ivsr_config_t *config_cldnn = NULL;
+     ivsr_config_t *config_reshape = NULL;
+     ivsr_config_t *config_input_res = NULL;
++    ivsr_config_t *config_nireq = NULL;
+     int nif = 0;
+     int input_dims[5] = { 0, 0, 0, 0, 1 };
+     int output_dims[5] = { 0, 0, 0, 0, 1 };
+@@ -714,35 +730,19 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+         // the default value is a rough estimation
+         ctx->options.nireq = av_cpu_count() / 2 + 1;
+     }
+-    //TODO: override the 2 values before async mode in iVSR SDK is supported
+-    //"async == 1/TRUE" is misleading as it's actually not supported by SDK
+-    ctx->options.nireq = 1;
+-    ctx->options.async = 1;
+ 
+     ivsr_model->model_type = ctx->options.model_type;
+ 
+     // set ivsr config
+     // input model
+-    ivsr_model->config = av_mallocz(sizeof(ivsr_config_t));
+-    config = ivsr_model->config;
+-    if (config == NULL) {
+-        av_log(ctx, AV_LOG_ERROR, "Failed to malloc config\n");
++    ivsr_model->config = create_and_link_config(NULL, INPUT_MODEL, model_filename, ctx);
++    if (ivsr_model->config == NULL)
+         goto err;
+-    }
+-    config->key = INPUT_MODEL;
+-    config->value = model_filename;
+-    config->next = NULL;
+-
+-    // target device
+-    config_device = av_mallocz(sizeof(ivsr_config_t));
+-    if (config_device == NULL) {
+-        av_log(ctx, AV_LOG_ERROR, "Failed to malloc device config\n");
++
++    config_device = create_and_link_config(ivsr_model->config, TARGET_DEVICE,
++                                           ctx->options.device_type, ctx);
++    if (config_device == NULL)
+         goto err;
+-    }
+-    config_device->key = TARGET_DEVICE;
+-    config_device->value = ctx->options.device_type;
+-    config_device->next = NULL;
+-    config->next = config_device;
+ 
+     AVFilterLink *inlink = filter_ctx->inputs[0];
+     int frame_h = inlink->h;
+@@ -751,27 +751,19 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+     ctx->frame_input_width  = inlink->w;
+ 
+     // input_res setting
+-    config_input_res = av_mallocz(sizeof(ivsr_config_t));
+-    if (config_input_res == NULL) {
+-        av_log(ctx, AV_LOG_ERROR, "Failed to malloc input_res config\n");
+-        goto err;
+-    }
+-
+     char input_res_string[40] = {0};
+-    sprintf(input_res_string, "%d,%d\0", frame_w, frame_h);
+-    config_input_res->key   = INPUT_RES;
+-    config_input_res->value = input_res_string;
+-    config_input_res->next  = NULL;
+-    config_device->next     = config_input_res;
+-
+-    // reshape setting
+-    config_reshape = av_mallocz(sizeof(ivsr_config_t));
+-    if (config_reshape == NULL) {
+-        av_log(ctx, AV_LOG_ERROR, "Failed to malloc reshape config\n");
++    sprintf(input_res_string, "%d,%d", frame_w, frame_h);
++    config_input_res = create_and_link_config(config_device, INPUT_RES, input_res_string, ctx);
++    if (config_input_res == NULL)
++         goto err;
++
++    char nireq_string[40] = {0};
++    sprintf(nireq_string, "%d", ctx->options.nireq);
++    config_nireq = create_and_link_config(config_input_res, INFER_REQ_NUMBER, nireq_string, ctx);
++    if (config_nireq == NULL)
+         goto err;
+-    }
+ 
+-    char shape_string[40];
++    char shape_string[40] = {0};
+     switch (ivsr_model->model_type) {
+     case BASICVSR:
+         sprintf(shape_string, "1,3,3,%d,%d", frame_h, frame_w);
+@@ -795,45 +787,26 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+         av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
+         return DNN_GENERIC_ERROR;
+     }
+-    config_reshape->key   = RESHAPE_SETTINGS;
+-    // by default it sets the same resolution as input res config.
+-    // If you want to enable smart-patch, set a smaller shape than the input.
+-    config_reshape->value = shape_string;
+-    config_reshape->next  = NULL;
+-    config_input_res->next = config_reshape;
++    config_reshape = create_and_link_config(config_nireq, RESHAPE_SETTINGS, shape_string, ctx);
++    if (config_reshape == NULL)
++        goto err;
+ 
+     if (ctx->options.extension != NULL) {
+-        // extension
+-        config_customlib = av_mallocz(sizeof(ivsr_config_t));
+-        if (config_customlib == NULL) {
+-            av_log(ctx, AV_LOG_ERROR, "Failed to malloc customlib config\n");
++        config_customlib = create_and_link_config(config_reshape, CUSTOM_LIB, ctx->options.extension, ctx);
++        if (config_customlib == NULL)
+             goto err;
+-        }
+-        config_customlib->key = CUSTOM_LIB;
+-        config_customlib->value = ctx->options.extension;
+-        config_customlib->next = NULL;
+-        config_reshape->next = config_customlib;
+     }
+ 
+     if (ctx->options.op_xml != NULL) {
+-        // cldnn
+-        config_cldnn = av_mallocz(sizeof(ivsr_config_t));
+-        if (config_cldnn == NULL) {
+-            av_log(ctx, AV_LOG_ERROR, "Failed to malloc cldnn config\n");
++        config_cldnn = create_and_link_config(ctx->options.extension != NULL ?
++                                              config_customlib : config_reshape,
++                                              CLDNN_CONFIG, ctx->options.op_xml, ctx);
++        if (config_cldnn == NULL)
+             goto err;
+-        }
+-        config_cldnn->key = CLDNN_CONFIG;
+-        config_cldnn->value = ctx->options.op_xml;
+-        config_cldnn->next = NULL;
+-        if (config_customlib != NULL) {
+-            config_customlib->next = config_cldnn;
+-        } else {
+-            config_reshape->next = config_cldnn;
+-        }
+     }
+ 
+     // initialize ivsr
+-    status = ivsr_init(config, &ivsr_model->handle);
++    status = ivsr_init(ivsr_model->config, &ivsr_model->handle);
+     if (status != OK) {
+         av_log(ctx, AV_LOG_ERROR, "Failed to initialize ivsr engine\n");
+         goto err;
+@@ -1052,8 +1025,8 @@ int ff_dnn_flush_ivsr(const DNNModel * model)
+     }
+ 
+     status =
+-        ivsr_process(ivsr_model->handle, request->in_frames,
+-                     request->out_frames, &request->cb);
++        ivsr_process_async(ivsr_model->handle, request->in_frames,
++                           request->out_frames, &request->cb);
+     if (status != OK) {
+         av_log(ctx, AV_LOG_ERROR,
+                "Failed to process the inference on input data seq\n");
+-- 
+2.34.1
+

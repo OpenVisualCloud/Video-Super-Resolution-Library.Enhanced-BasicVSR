@@ -1,0 +1,889 @@
+From 001b77050d3c035b24fd2c853dab839e9d8e778e Mon Sep 17 00:00:00 2001
+From: Xiaoxia Liang <xiaoxia.liang@intel.com>
+Date: Mon, 9 Sep 2024 14:17:02 +0000
+Subject: [PATCH] enable PrePostProcessing of OpenVINO in dnn_backend_ivsr
+
+Signed-off-by: Xiaoxia Liang <xiaoxia.liang@intel.com>
+---
+ libavfilter/dnn/dnn_backend_ivsr.c | 493 ++++++++++++++++++++---------
+ libavfilter/dnn/dnn_io_proc.c      |  70 ++++
+ libavfilter/vf_dnn_processing.c    |   3 +-
+ 3 files changed, 408 insertions(+), 158 deletions(-)
+
+diff --git a/libavfilter/dnn/dnn_backend_ivsr.c b/libavfilter/dnn/dnn_backend_ivsr.c
+index 997c1b803d..44d603190c 100644
+--- a/libavfilter/dnn/dnn_backend_ivsr.c
++++ b/libavfilter/dnn/dnn_backend_ivsr.c
+@@ -126,6 +126,20 @@ static int get_datatype_size(DNNDataType dt)
+     }
+ }
+ 
++static DNNColorOrder map_dnn_color_order(int format) {
++    switch (format)
++    {
++    case AV_PIX_FMT_RGB24:
++    case AV_PIX_FMT_RGB48:
++        return DCO_RGB;
++    case AV_PIX_FMT_BGR24:
++    case AV_PIX_FMT_BGR48:
++        return DCO_BGR;
++    default:
++        return DCO_NONE;
++    }
++}
++
+ static int clamp(int val, int min, int max) {
+     if (val < min)
+         return min;
+@@ -135,44 +149,54 @@ static int clamp(int val, int min, int max) {
+         return val;
+ }
+ 
+-static void convert_nchw_to_nhwc(void* data, int N, int C, int H, int W) {
++static void convert_nchw_to_nhwc(void* data, int N, int C, int H, int W, DNNDataType type) {
+     int data_size = N * C * H * W;
+-    void *temp = av_malloc(data_size * sizeof(float));
++    int type_size = get_datatype_size(type);
++    data_size = data_size * type_size;
++    uint8_t *temp = av_malloc(data_size);
+     int max_threads = omp_get_num_procs() / 2;
+     // memory copy
+     #pragma omp parallel for num_threads(max_threads)
+     for (int i = 0; i < data_size; i++)
+-        ((float *)temp)[i] = ((float *)data)[i];
++        temp[i] = ((uint8_t*)data)[i];
+ 
+-    // convert buffer from nchw to nhwc and reverse rgb to bgr
++    // convert buffer from nchw to nhwc
+     #pragma omp parallel num_threads(max_threads)
+     {
+         for (int n = 0; n < N; n++)
+             for (int h = omp_get_thread_num(); h < H; h += omp_get_num_threads())
+-	        for (int w = 0; w < W; w++)
+-	            for (int c = 0; c < C; c++)
+-			((float *)data)[n * H * W * C + h * W * C + w * C + c] = ((float *)temp)[n * C * H * W + (C - 1 - c) * H * W + h * W + w];
++                for (int w = 0; w < W; w++)
++                    for (int c = 0; c < C; c++) {
++                        for (int byte = 0; byte < type_size; ++byte)
++                            ((uint8_t*)data)[(n * H * W * C + h * W * C + w * C + c) * type_size + byte] =
++                                temp[(n * C * H * W + c * H * W + h * W + w) * type_size + byte];
++                    }
+     }
+     av_free(temp);
+ }
+ 
+-static void convert_nhwc_to_nchw(void* data, int N, int C, int H, int W) {
++static void convert_nhwc_to_nchw(void* data, int N, int C, int H, int W, DNNDataType type) {
+     int data_size = N * C * H * W;
+-    void *temp = av_malloc(data_size * sizeof(float));
++    int type_size = get_datatype_size(type);
++    data_size = data_size * type_size;
++    uint8_t *temp = av_malloc(data_size);
+     int max_threads = omp_get_num_procs() / 2;
+     // memory copy
+     #pragma omp parallel for num_threads(max_threads)
+     for (int i = 0; i < data_size; i++)
+-        ((float *)temp)[i] = ((float *)data)[i];
++        temp[i] = ((uint8_t*)data)[i];
+ 
+-    // convert buffer from nhwc to nchw and reverse bgr to rgb
++    // convert buffer from nhwc to nchw
+     #pragma omp parallel num_threads(max_threads)
+     {
+         for (int n = 0; n < N; n++)
+-	    for (int h = omp_get_thread_num(); h < H; h += omp_get_num_threads())
+-		for (int w = 0; w < W; w++)
+-		    for (int c = 0; c < C; c++)
+-			((float *)data)[n * C * H * W + c * H * W + h * W + w] = ((float *)temp)[n * H * W * C + h * W * C + w * C + C - 1 - c];
++            for (int h = omp_get_thread_num(); h < H; h += omp_get_num_threads())
++                for (int w = 0; w < W; w++)
++                    for (int c = 0; c < C; c++) {
++                        for (int byte = 0; byte < type_size; ++byte)
++                            ((uint8_t*)data)[(n * C * H * W + c * H * W + h * W + w) * type_size + byte] =
++                                temp[(n * H * W * C + h * W * C + w * C + c) * type_size + byte];
++                    }
+     }
+     av_free(temp);
+ }
+@@ -191,6 +215,75 @@ static void set_padding_value(void* data, uint32_t width, uint32_t height, uint3
+     memset(data + index, padding_value, padding_height * n_width);
+ }
+ 
++static size_t get_tensor_size(const tensor_desc_t* tensor) {
++    size_t tensor_size = 0;
++    size_t data_type_size = 0;
++    if (NULL == tensor || tensor->dimension <= 0)
++        return 0;
++
++    if (strcmp(tensor->precision, "u8") == 0) {
++        data_type_size = sizeof(uint8_t);
++    } else if (strcmp(tensor->precision, "u16") == 0) {
++        data_type_size = sizeof(uint16_t);
++    } else if (strcmp(tensor->precision, "f32") == 0) {
++        data_type_size = sizeof(float);
++    } else {
++        av_assert0(!"not supported the precision yet.");
++        return 1;
++    }
++
++    tensor_size = data_type_size;
++    for (int i = 0; i < tensor->dimension; ++i) {
++        tensor_size *= tensor->shape[i];
++    }
++    return tensor_size;
++}
++/*
++ * set layout, precision, width, height and channels info accorring to tensor info
++*/
++static void set_dnndata_info(DNNData *dnn_data, const tensor_desc_t* tensor) {
++    if (NULL == dnn_data || NULL == tensor)
++        return;
++
++    // set layout and width, height and channels
++    if (strcmp(tensor->layout, "NHWC") == 0 || strcmp(tensor->layout, "[N,H,W,C]") == 0) {
++        dnn_data->layout   = DL_NHWC;
++        dnn_data->channels = tensor->shape[3];
++        dnn_data->height   = tensor->shape[1];
++        dnn_data->width    = tensor->shape[2];
++    } else if (strcmp(tensor->layout, "NCHW") == 0 || strcmp(tensor->layout, "[N,C,H,W]") == 0) {
++        dnn_data->layout   = DL_NCHW;
++        dnn_data->channels = tensor->shape[1];
++        dnn_data->height   = tensor->shape[2];
++        dnn_data->width    = tensor->shape[3];
++    } else if (strcmp(tensor->layout, "NFHWC") == 0 || strcmp(tensor->layout, "[N,F,H,W,C]") == 0) {
++        dnn_data->layout   = DL_NHWC;
++        dnn_data->channels = tensor->shape[4];
++        dnn_data->height   = tensor->shape[2];
++        dnn_data->width    = tensor->shape[3];
++    } else if (strcmp(tensor->layout, "NFCHW") == 0 || strcmp(tensor->layout, "[N,F,C,H,W]") == 0) {
++        dnn_data->layout   = DL_NCHW;
++        dnn_data->channels = tensor->shape[2];
++        dnn_data->height   = tensor->shape[3];
++        dnn_data->width    = tensor->shape[4];
++    } else {
++        av_assert0(!"DNNData not supported the layout yet.");
++        return;
++    }
++
++    // set precision
++    if (strcmp(tensor->precision, "f32") == 0 || strcmp(tensor->precision, "fp32") == 0) {
++        dnn_data->dt = DNN_FLOAT;
++    } else if (strcmp(tensor->precision, "u8") == 0) {
++        dnn_data->dt = DNN_UINT8;
++    } else if (strcmp(tensor->precision, "u16") == 0){
++        dnn_data->dt = DNN_UINT16;
++    } else {
++        av_assert0(!"DNNData not supported the precision yet.");
++        return;
++    }
++}
++
+ /* returns
+  *     DNN_GENERIC_ERROR,
+  *     DNN_MORE_FRAMES - waiting for more input frames,
+@@ -207,62 +300,49 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+     TaskItem *task;
+     AVFrame *tmp_frame = NULL;
+     void *in_data = NULL;
+-    int dims[5] = { 0, 0, 0, 0, 0 };
+     float normalize_factor = ctx->options.normalize_factor;
+     int padding_height = 0, padding_width = 0;
+-
+-    status = ivsr_get_attr(ivsr_model->handle, INPUT_TENSOR_DESC, dims);
++    tensor_desc_t input_tensor_desc_get = {
++        .precision = {0},
++        .layout = {0},
++        .tensor_color_format = {0},
++        .model_color_format = {0},
++        .scale = 0.0,
++        .dimension = 0,
++        .shape = {0}};
++
++    status = ivsr_get_attr(ivsr_model->handle, INPUT_TENSOR_DESC, &input_tensor_desc_get);
+     if (status != OK) {
+         av_log(ctx, AV_LOG_ERROR, "Failed to get input dimensions\n");
+         return DNN_GENERIC_ERROR;
+     }
+ 
+-    switch (ivsr_model->model_type) {
+-    case BASICVSR:
+-        input.channels = dims[1];
+-        input.height = dims[3];
+-        input.width = dims[4];
+-        input.dt = DNN_FLOAT;
+-        break;
+-    case VIDEOPROC:
+-    case EDSR:
+-    case CUSTVSR:
+-        input.channels = dims[2];
+-        input.height = dims[3];
+-        input.width = dims[4];
+-        input.dt = DNN_FLOAT;
+-        break;
+-    case TSENET:
+-        //INFO:for TSENet, dims[2]==nif * channels, and nif==3
+-        input.channels = dims[2] / 3;
+-        input.height = dims[3];
+-        input.width = dims[4];
+-        input.dt = DNN_FLOAT;
+-        break;
+-    default:
+-        av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
+-        return DNN_GENERIC_ERROR;
+-    }
++    set_dnndata_info(&input, &input_tensor_desc_get);
++    if (ivsr_model->model_type == TSENET)
++        input.channels = input.channels / 3;
+ 
+     input.data = request->in_frames;
+-    input.order = DCO_BGR;
+     in_data = input.data;
+-    input.scale = 0;
++    // ff_proc_from_frame_to_dnn: uint_8->uint8 requires scale == 1 and mean == 0 and dt == UINT8
++    input.scale = 1;
+     input.mean = 0;
+-    input.layout = DL_NONE;
++
+     ctx->model_input_height = input.height;
+     ctx->model_input_width = input.width;
+ 
+     padding_height = ctx->model_input_height - ctx->frame_input_height;
+     padding_width  = ctx->model_input_width - ctx->frame_input_width;
+     for (int i = 0; i < ctx->options.batch_size; ++i) {
+-        //INFO: for TSENET, lltask_queue contains (N-1)th and (N)th frames
+-        //so peek (N)th frame.
++        // INFO: for TSENET, lltask_queue contains (N-1)th and (N)th frames
++        // so peek (N)th frame.
+         lltask = ff_queue_peek_back(ivsr_model->lltask_queue);
+         if (!lltask) {
+             break;
+         }
+         task = lltask->task;
++        // the color order of input DNNData is same as format of in frame
++        input.order = map_dnn_color_order(task->in_frame->format);
++
+         if (task->do_ioproc) {
+             if (ivsr_model->model->frame_pre_proc != NULL) {
+                 ivsr_model->model->frame_pre_proc(task->in_frame, &input,
+@@ -281,27 +361,28 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+                     }
+                     input.data = in_data;
+                 }
+-                if (ivsr_model->model_type == BASICVSR && dims[2] != 1) {
++                if (ivsr_model->model_type == BASICVSR && ivsr_model->nif != 1) {
+                     int read_frame_num = 0;
+-                    for (int j = 0; j < dims[2]; j++) {
++                    for (int j = 0; j < ivsr_model->nif; j++) {
+                         if (av_fifo_can_read(task->in_queue)) {
+                             av_fifo_read(task->in_queue, &tmp_frame, 1);
+                             ff_proc_from_frame_to_dnn(tmp_frame, &input,
+                                                       ivsr_model->model->
+                                                       filter_ctx);
+                             // convert buffer from NHWC to NCHW when C != 1
+-                            convert_nhwc_to_nchw(input.data, 1, input.channels, input.height, input.width);
++                            if (input.layout != 1 && input.layout == DL_NONE )
++                                convert_nhwc_to_nchw(input.data, 1, input.channels, input.height, input.width, input.dt);
+                             input.data +=
+                                 input.height * input.width *
+-                                input.channels * sizeof(float);
++                                input.channels * get_datatype_size(input.dt);
+                             read_frame_num++;
+                         }
+                     }
+                     input.data = in_data;
+-                    if (read_frame_num < dims[2])
++                    if (read_frame_num < ivsr_model->nif)
+                         av_log(ctx, AV_LOG_ERROR,
+-                               "Read frame number is %d less than the model requirement!!!\n",
+-                               read_frame_num);
++                               "Read frame number is %d less than the model requirement %d!!!\n",
++                               read_frame_num, ivsr_model->nif);
+                 } else if (ivsr_model->model_type == TSENET) {
+                     //1. copy the input_frame(ref the buffer) and put into ivsr_model->fame_queue
+                     tmp_frame = av_frame_alloc();
+@@ -329,8 +410,8 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+                         for (int idx = 0; idx < ivsr_model->nif; idx++) {
+                             //INFO: the 3 frames in frame_queue are: (N-2)th, (N-1)th, (N)th
+                             ff_proc_from_frame_to_dnn(input_frames[idx], &input, ivsr_model->model->filter_ctx);
+-                            convert_nhwc_to_nchw(input.data, 1, input.channels, input.height, input.width);
+-                            input.data += input.height * input.width * input.channels * sizeof(float);
++                            convert_nhwc_to_nchw(input.data, 1, input.channels, input.height, input.width, input.dt);
++                            input.data += input.height * input.width * input.channels * get_datatype_size(input.dt);
+                         }
+                         input.data = in_data;
+                         //pop the (N-2)th frame from frame_queue and free it
+@@ -349,10 +430,12 @@ static int fill_model_input_ivsr(IVSRModel * ivsr_model,
+                     ff_proc_from_frame_to_dnn(task->in_frame, &input,
+                                               ivsr_model->model->
+                                               filter_ctx);
+-                    if (input.channels != 1) {
+-                        convert_nhwc_to_nchw(input.data, 1, input.channels, input.height, input.width);
++                    if (input.channels != 1 && (input.layout == DL_NONE)) {
++                        convert_nhwc_to_nchw(input.data, 1, input.channels, input.height, input.width, input.dt);
+                     }
+-                    if (normalize_factor != 1) {
++
++                    if (normalize_factor != 1 && input.dt == DNN_FLOAT
++                            && (input.scale > 1 || input.scale == 0)) {
+                         // do not need to covert buffer from NHWC to NCHW if the channels is 1, only need to mulitple normalize_factor
+                         #pragma omp parallel for
+                         for (int pos = 0; pos < input.height * input.width * input.channels; pos++) {
+@@ -387,43 +470,47 @@ static void infer_completion_callback(void *args)
+     IVSRContext *ctx = &ivsr_model->ctx;
+     AVFrame *tmp_frame = NULL;
+     int offset = 0;
+-    int dims[5] = { 0, 0, 0, 0, 0 };
+     float normalize_factor = ctx->options.normalize_factor;
+-
+-    status = ivsr_get_attr(ivsr_model->handle, OUTPUT_TENSOR_DESC, dims);
++    tensor_desc_t output_tensor_desc_get = {
++        .precision = {0},
++        .layout = {0},
++        .tensor_color_format = {0},
++        .model_color_format = {0},
++        .scale = 0.0,
++        .dimension = 0,
++        .shape = {0}};
++
++    // ivsr_get_attr can only get precision, layout, dimension and shape info
++    status = ivsr_get_attr(ivsr_model->handle, OUTPUT_TENSOR_DESC, &output_tensor_desc_get);
+     if (status != OK) {
+         av_log(ctx, AV_LOG_ERROR, "Failed to get output dimensions\n");
+         return;
+     }
+ 
+-    switch (ivsr_model->model_type) {
++    set_dnndata_info(&output, &output_tensor_desc_get);
++
++    output.data = request->out_frames;
++    output.mean     = 0;
++    // ff_proc_from_dnn_to_frame: float->uint8 require (scale == 255 or scale == 0) and mean == 0
++    output.scale    = output.dt == DNN_UINT8 ? 1 : 0;
++    // set order based on model type
++    switch (ivsr_model->model_type)
++    {
+     case BASICVSR:
+-        output.channels = dims[1];
+-        output.height = dims[3];
+-        output.width = dims[4];
+-        break;
+     case VIDEOPROC:
+     case EDSR:
+-    case CUSTVSR:
+     case TSENET:
+-        output.channels = dims[2];
+-        output.height = dims[3];
+-        output.width = dims[4];
++        output.order = DCO_RGB;
+         break;
+     default:
+-        av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
+-        return;
++        output.order = DCO_NONE;
++        break;
+     }
+ 
+-    output.dt = DNN_FLOAT;
+-    output.data = request->out_frames;
+-    output.scale    = 0;
+-    output.mean     = 0;
+-    output.layout = DL_NONE;
+     const AVPixFmtDescriptor* pix_desc = av_pix_fmt_desc_get(task->out_frame->format);
+     const AVComponentDescriptor* comp_desc = &pix_desc->comp[0];
+     int bits = comp_desc->depth;
+-    av_assert0(request->lltask_count <= dims[0]);
++    av_assert0(request->lltask_count <= output_tensor_desc_get.shape[0]);
+     av_assert0(request->lltask_count >= 1);
+     for (int i = 0; i < request->lltask_count; ++i) {
+         task = request->lltasks[i]->task;
+@@ -435,14 +522,14 @@ static void infer_completion_callback(void *args)
+                                                    ivsr_model->model->
+                                                    filter_ctx);
+             } else {
+-                if (ivsr_model->model_type == BASICVSR && dims[2] != 1) {
++                if (ivsr_model->model_type == BASICVSR && ivsr_model->nif != 1) {
+                     do {
+                         int ret =
+                             av_fifo_peek(task->out_queue, &tmp_frame, 1,
+                                          offset);
+                         if (ret == 0) {
+-                            if (output.channels != 1) {
+-                                convert_nchw_to_nhwc(output.data, 1, output.channels, output.height, output.width);
++                            if (output.channels != 1 && output.layout == DL_NONE) {
++                                convert_nchw_to_nhwc(output.data, 1, output.channels, output.height, output.width, output.dt);
+                             }
+                             ff_proc_from_dnn_to_frame(tmp_frame, &output,
+                                                       &ivsr_model->model->
+@@ -458,22 +545,25 @@ static void infer_completion_callback(void *args)
+                             }
+                             output.data +=
+                                 output.height * output.width *
+-                                output.channels * sizeof(float);
++                                output.channels * get_datatype_size(output.dt);
+                         }
+                         offset++;
+-                    } while (offset != dims[2]);
++                    } while (offset != ivsr_model->nif);
+                 } else {
+-                    if (output.channels != 1) {
++                    if (output.channels != 1 && output.layout == DL_NONE) {
+                         //convert buffer from NCHW to NHWC
+-                        convert_nchw_to_nhwc(output.data, 1, output.channels, output.height, output.width);
++                        convert_nchw_to_nhwc(output.data, 1, output.channels, output.height, output.width, output.dt);
+                     }
+-                    if (normalize_factor != 1) {
++
++                    if (normalize_factor != 1 && output.dt == DNN_FLOAT
++                            && (output.scale > 1 || output.scale == 0)) {
+                         #pragma omp parallel for
+                         // only need to devide by normalize_factor for channels = 1.
+                         for (int pos = 0; pos < output.height * output.width * output.channels; pos++) {
+                             ((float*)output.data)[pos] = ((float*)output.data)[pos] / normalize_factor;
+                         }
+                     }
++
+                     ff_proc_from_dnn_to_frame(task->out_frame, &output,
+                                               &ivsr_model->model->
+                                               filter_ctx);
+@@ -531,40 +621,27 @@ static int get_input_ivsr(void *model, DNNData * input,
+     IVSRModel *ivsr_model = model;
+     IVSRContext *ctx = &ivsr_model->ctx;
+     IVSRStatus status;
+-    int dims[5] = { 0, 0, 0, 0, 0 };
+-
+-    status = ivsr_get_attr(ivsr_model->handle, INPUT_TENSOR_DESC, dims);
++    tensor_desc_t input_tensor_desc_get = {
++        .precision = {0},
++        .layout = {0},
++        .tensor_color_format = {0},
++        .model_color_format = {0},
++        .scale = 0.0,
++        .dimension = 0,
++        .shape = {0}};
++
++    status = ivsr_get_attr(ivsr_model->handle, INPUT_TENSOR_DESC, &input_tensor_desc_get);
+     if (status != OK) {
+         av_log(ctx, AV_LOG_ERROR, "Failed to get input dimensions\n");
+         return DNN_GENERIC_ERROR;
+     }
+ 
+-    switch (ivsr_model->model_type) {
+-    case BASICVSR:
+-        input->channels = dims[1];
+-        input->height = dims[3];
+-        input->width = dims[4];
+-        input->dt = DNN_FLOAT;
+-        break;
+-    case VIDEOPROC:
+-    case EDSR:
+-    case CUSTVSR:
+-        input->channels = dims[2];
+-        input->height = dims[3];
+-        input->width = dims[4];
+-        input->dt = DNN_FLOAT;
+-        break;
+-    case TSENET:
+-        //INFO:for TSENet, dims[2] == nif * channels, and nif==3
+-        input->channels = dims[2] / 3;
+-        input->height = dims[3];
+-        input->width = dims[4];
+-        input->dt = DNN_FLOAT;
+-        break;
+-    default:
+-        av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
+-        return DNN_GENERIC_ERROR;
+-    }
++    set_dnndata_info(input, &input_tensor_desc_get);
++    if (ivsr_model->model_type == TSENET)
++        input->channels = input->channels / 3;
++
++    // hard code to pass check_modelinput_inlink() that requires DNN_FLOAT of model_input->dt
++    input->dt = DNN_FLOAT;
+ 
+     return 0;
+ }
+@@ -648,29 +725,29 @@ static int get_output_ivsr(void *model, const char *input_name,
+     IVSRModel *ivsr_model = model;
+     IVSRContext *ctx = &ivsr_model->ctx;
+     IVSRStatus status;
+-    int dims[5] = { 0, 0, 0, 0, 0 };
+-
+-    status = ivsr_get_attr(ivsr_model->handle, OUTPUT_TENSOR_DESC, dims);
++    DNNData output;
++    tensor_desc_t output_tensor_desc_get = {
++        .precision = {0},
++        .layout = {0},
++        .tensor_color_format = {0},
++        .model_color_format = {0},
++        .scale = 0.0,
++        .dimension = 0,
++        .shape = {0}};
++
++    status = ivsr_get_attr(ivsr_model->handle, OUTPUT_TENSOR_DESC, &output_tensor_desc_get);
+     if (status != OK) {
+         av_log(ctx, AV_LOG_ERROR, "Failed to get output dimensions\n");
+         return DNN_GENERIC_ERROR;
+     }
+ 
+-    switch (ivsr_model->model_type) {
+-    case VIDEOPROC:
+-	 *output_height = input_height;
+-	 *output_width = input_width;
+-	 break;
+-    case BASICVSR:
+-    case EDSR:
+-    case CUSTVSR:
+-    case TSENET:
+-        *output_height = dims[3];
+-        *output_width = dims[4];
+-        break;
+-    default:
+-        av_log(ctx, AV_LOG_ERROR, "Not supported model type\n");
+-        return DNN_GENERIC_ERROR;
++    set_dnndata_info(&output, &output_tensor_desc_get);
++    *output_height = output.height;
++    *output_width  = output.width;
++
++    if (ivsr_model->model_type == VIDEOPROC) {
++        *output_height = input_height;
++        *output_width  = input_width;
+     }
+ 
+     return ret;
+@@ -678,14 +755,20 @@ static int get_output_ivsr(void *model, const char *input_name,
+ 
+ // Utility function to create and link config
+ static ivsr_config_t* create_and_link_config(ivsr_config_t *previous,
+-                                             int key, char *value, void *ctx) {
++                                             int key, void *value, void *ctx) {
+     ivsr_config_t *config = av_mallocz(sizeof(ivsr_config_t));
+     if (config == NULL) {
+         av_log(ctx, AV_LOG_ERROR, "Failed to malloc config\n");
+         return NULL;
+     }
+     config->key = key;
+-    config->value = value;
++    if (config->key == INPUT_TENSOR_DESC_SETTING
++        || config->key == OUTPUT_TENSOR_DESC_SETTING) {
++        config->value = (tensor_desc_t *)value;
++    } else {
++        config->value = (char *)value;
++    }
++
+     if (previous != NULL) {
+         previous->next = config;
+     }
+@@ -708,8 +791,24 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+     ivsr_config_t *config_input_res = NULL;
+     ivsr_config_t *config_nireq = NULL;
+     int nif = 0;
+-    int input_dims[5] = { 0, 0, 0, 0, 1 };
+-    int output_dims[5] = { 0, 0, 0, 0, 1 };
++    ivsr_config_t *config_input_tensor = NULL;
++    ivsr_config_t *config_output_tensor = NULL;
++    tensor_desc_t input_tensor_desc_get = {
++        .precision = {0},
++        .layout = {0},
++        .tensor_color_format = {0},
++        .model_color_format = {0},
++        .scale = 0.0,
++        .dimension = 0,
++        .shape = {0}};
++    tensor_desc_t output_tensor_desc_get = {
++        .precision = {0},
++        .layout = {0},
++        .tensor_color_format = {0},
++        .model_color_format = {0},
++        .scale = 0.0,
++        .dimension = 0,
++        .shape = {0}};
+ 
+     model = av_mallocz(sizeof(DNNModel));
+     if (!model) {
+@@ -775,9 +874,98 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+     if (config_input_res == NULL)
+          goto err;
+ 
++    tensor_desc_t input_tensor_desc_set = {
++        .precision = "u8",
++        .layout = "NHWC",
++        .tensor_color_format = {0},
++        .model_color_format = {0},
++        .scale = 0.0,
++        .dimension = 4,
++        .shape = {0, 0, 0, 0}};
++    tensor_desc_t output_tensor_desc_set = {
++        .precision = "fp32",
++        .layout = "NHWC",
++        .tensor_color_format = {0},
++        .model_color_format = {0},
++        .scale = 0.0,
++        .dimension = 4,
++        .shape = {0, 0, 0, 0}};
++    // set element type according to bit depth of frame
++    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(inlink->format);
++    switch (desc->comp[0].depth)
++    {
++    case 8:
++        strcpy(input_tensor_desc_set.precision, "u8");
++        break;
++    case 10:
++    case 16:
++        strcpy(input_tensor_desc_set.precision, "u16");
++        break;
++    default:
++        break;
++    }
++    // set layout for Basic_VSR
++    if (ivsr_model->model_type == BASICVSR) {
++        strcpy(input_tensor_desc_set.layout, "NFHWC");
++        strcpy(output_tensor_desc_set.layout, "NFHWC");
++    }
++    // set scale
++    if (fabsf(ctx->options.normalize_factor - 1) < 1e-6f) {
++        switch (desc->comp[0].depth)
++        {
++        case 8:
++            input_tensor_desc_set.scale = 255.0;
++            break;
++        case 10:
++            input_tensor_desc_set.scale = 1023.0;
++            break;
++        case 16:
++            input_tensor_desc_set.scale = 65535.0;
++            break;
++        default:
++            break;
++        }
++    }
++
++    // set color format of input tensor
++    switch (inlink->format)
++    {
++    case AV_PIX_FMT_RGB24:
++    case AV_PIX_FMT_RGB48:
++        strcpy(input_tensor_desc_set.tensor_color_format, "RGB");
++        break;
++    case AV_PIX_FMT_BGR24:
++    case AV_PIX_FMT_BGR48:
++        strcpy(input_tensor_desc_set.tensor_color_format, "BGR");
++        break;
++    case AV_PIX_FMT_YUV420P:
++    case AV_PIX_FMT_YUV420P10LE:
++        strcpy(input_tensor_desc_set.tensor_color_format, "I420_Three_Planes");
++        break;
++    default:
++        break;
++    }
++    // set color format of model required
++    switch (ivsr_model->model_type)
++    {
++    case BASICVSR:
++    case EDSR:
++    case VIDEOPROC:
++    case TSENET:
++        strcpy(input_tensor_desc_set.model_color_format, "RGB");
++        break;
++    case CUSTVSR:
++        strcpy(input_tensor_desc_set.model_color_format, "I420_Three_Planes");
++        break;
++    default:
++        break;
++    }
++    config_input_tensor = create_and_link_config(config_input_res, INPUT_TENSOR_DESC_SETTING, &input_tensor_desc_set, ctx);
++    config_output_tensor = create_and_link_config(config_input_tensor, OUTPUT_TENSOR_DESC_SETTING, &output_tensor_desc_set, ctx);
++
+     char nireq_string[40] = {0};
+     sprintf(nireq_string, "%d", ctx->options.nireq);
+-    config_nireq = create_and_link_config(config_input_res, INFER_REQ_NUMBER, nireq_string, ctx);
++    config_nireq = create_and_link_config(config_output_tensor, INFER_REQ_NUMBER, nireq_string, ctx);
+     if (config_nireq == NULL)
+         goto err;
+ 
+@@ -840,20 +1028,19 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+     if(ivsr_model->model_type == TSENET) ivsr_model->nif = 3;
+ 
+     status =
+-        ivsr_get_attr(ivsr_model->handle, INPUT_TENSOR_DESC, input_dims);
++        ivsr_get_attr(ivsr_model->handle, INPUT_TENSOR_DESC, &input_tensor_desc_get);
+     if (status != OK) {
+-        av_log(ctx, AV_LOG_ERROR, "Failed to get input dimensions\n");
++        av_log(ctx, AV_LOG_ERROR, "Failed to get input tensor description\n");
+         goto err;
+     }
+ 
+     status =
+-        ivsr_get_attr(ivsr_model->handle, OUTPUT_TENSOR_DESC, output_dims);
++        ivsr_get_attr(ivsr_model->handle, OUTPUT_TENSOR_DESC, &output_tensor_desc_get);
+     if (status != OK) {
+-        av_log(ctx, AV_LOG_ERROR, "Failed to get output dimensions\n");
++        av_log(ctx, AV_LOG_ERROR, "Failed to get output description\n");
+         goto err;
+     }
+ 
+-
+     ivsr_model->request_queue = ff_safe_queue_create();
+     if (!ivsr_model->request_queue) {
+         av_log(ctx, AV_LOG_ERROR, "Failed to create request queue\n");
+@@ -868,25 +1055,19 @@ DNNModel *ff_dnn_load_model_ivsr(const char *model_filename,
+             goto err;
+         }
+ 
+-        //TODO: assume batch_size==1
+-        item->in_frames =
+-            av_malloc(input_dims[0] * input_dims[1] * input_dims[2] *
+-                      input_dims[3] * input_dims[4] * sizeof(float));
+-
+-        int input_byte_size = input_dims[0] * input_dims[1] * input_dims[2] * input_dims[3] * input_dims[4] * sizeof(float);
+-        memset(item->in_frames, 0,  input_byte_size);
++        item->in_frames = av_malloc(get_tensor_size(&input_tensor_desc_get));
+         if (!item->in_frames) {
+             av_log(ctx, AV_LOG_ERROR, "Failed to malloc in frames\n");
+             goto err;
+         }
++        memset(item->in_frames, 0,  get_tensor_size(&input_tensor_desc_get));
+ 
+-        item->out_frames =
+-            av_malloc(output_dims[0] * output_dims[1] * output_dims[2] *
+-                      output_dims[3] * output_dims[4] * sizeof(float));
++        item->out_frames = av_malloc(get_tensor_size(&output_tensor_desc_get));
+         if (!item->out_frames) {
+             av_log(ctx, AV_LOG_ERROR, "Failed to malloc out frames\n");
+             goto err;
+         }
++        memset(item->out_frames, 0 , get_tensor_size(&output_tensor_desc_get));
+ 
+         item->cb.ivsr_cb = infer_completion_callback;
+         item->cb.args = item;
+diff --git a/libavfilter/dnn/dnn_io_proc.c b/libavfilter/dnn/dnn_io_proc.c
+index f51c0669a9..8dec6d97be 100644
+--- a/libavfilter/dnn/dnn_io_proc.c
++++ b/libavfilter/dnn/dnn_io_proc.c
+@@ -40,6 +40,59 @@ static int get_datatype_size(DNNDataType dt)
+     }
+ }
+ 
++static DNNColorOrder map_dnn_color_order(int format) {
++    switch (format)
++    {
++    case AV_PIX_FMT_RGB24:
++    case AV_PIX_FMT_RGB48:
++        return DCO_RGB;
++    case AV_PIX_FMT_BGR24:
++    case AV_PIX_FMT_BGR48:
++        return DCO_BGR;
++    default:
++        return DCO_NONE;
++    }
++}
++
++// bgr<->rgb
++static void transpose(DNNData *input, DNNColorOrder dst_order) {
++    if (input->order == DCO_NONE || input->layout == DL_NONE
++            || dst_order == DCO_NONE || input->order == dst_order)
++        return;
++
++    int H = input->height;
++    int W = input->width;
++    int C = input->channels;
++    void *data = input->data;
++    int a_index = 0, b_index = 0;
++    int type_size = get_datatype_size(input->dt);
++    //transpose bgr<->rgb for NHWC layout
++    if (input->layout == DL_NHWC) {
++        for (int h = 0; h < H; ++h) {
++            for (int w = 0; w < W; ++w) {
++                a_index = h * W * C + w * C;
++                b_index = a_index + (C - 1);
++                for (int byte = 0; byte < type_size; ++byte) {
++                    uint8_t tmp = ((uint8_t*)data)[a_index * type_size + byte];
++                    ((uint8_t*)data)[a_index * type_size + byte] = ((uint8_t*)data)[b_index * type_size + byte];
++                    ((uint8_t*)data)[b_index * type_size + byte] = tmp;
++                }
++            }
++        }
++    // transpose bgr<->rgb for NCHW layout
++    } else if (input->layout == DL_NCHW) {
++        int plane_size = H * W * type_size;
++        void *tmp = av_malloc(plane_size);
++        memcpy(tmp, data, plane_size);
++        memcpy(data, data + (C - 1) * plane_size, plane_size);
++        memcpy(data + (C - 1) * plane_size, tmp, plane_size);
++        av_free(tmp);
++    }
++
++    // re-set order
++    input->order = dst_order;
++}
++
+ int ff_proc_from_dnn_to_frame(AVFrame *frame, DNNData *output, void *log_ctx)
+ {
+     struct SwsContext *sws_ctx;
+@@ -64,6 +117,9 @@ int ff_proc_from_dnn_to_frame(AVFrame *frame, DNNData *output, void *log_ctx)
+     /* scale == 1 and mean == 0 and dt == UINT8: passthrough */
+     if (fabsf(output->scale - 1) < 1e-6f && fabsf(output->mean) < 1e-6 && output->dt == DNN_UINT8)
+         src_fmt = AV_PIX_FMT_GRAY8;
++    /* scale == 1 and mean == 0 and dt == UINT16: passthrough */
++    else if (fabsf(output->scale - 1) < 1e-6f && fabsf(output->mean) < 1e-6 && output->dt == DNN_UINT16)
++        src_fmt = AV_PIX_FMT_GRAY16;
+     /* (scale == 255 or scale == 0) and mean == 0 and dt == FLOAT: normalization */
+     else if ((fabsf(output->scale - 255) < 1e-6f || fabsf(output->scale) < 1e-6f) &&
+              fabsf(output->mean) < 1e-6 && output->dt == DNN_FLOAT)
+@@ -74,6 +130,11 @@ int ff_proc_from_dnn_to_frame(AVFrame *frame, DNNData *output, void *log_ctx)
+         return AVERROR(ENOSYS);
+     }
+ 
++    DNNColorOrder dst_color_order = map_dnn_color_order(frame->format);
++    if (dst_color_order != output->order) {
++        transpose(output, dst_color_order);
++    }
++
+     dst_data = (void **)frame->data;
+     linesize[0] = frame->linesize[0];
+     plane_size = linesize[0] * frame->height;
+@@ -220,6 +281,9 @@ int ff_proc_from_frame_to_dnn(AVFrame *frame, DNNData *input, void *log_ctx)
+     /* scale == 1 and mean == 0 and dt == UINT8: passthrough */
+     if (fabsf(input->scale - 1) < 1e-6f && fabsf(input->mean) < 1e-6 && input->dt == DNN_UINT8)
+         dst_fmt = AV_PIX_FMT_GRAY8;
++    /* scale == 1 and mean == 0 and dt == UINT16: passthrough */
++    else if (fabsf(input->scale - 1) < 1e-6f && fabsf(input->mean) < 1e-6 && input->dt == DNN_UINT16)
++        dst_fmt = comp_desc->depth == 10 ? AV_PIX_FMT_GRAY10 : AV_PIX_FMT_GRAY16;
+     /* (scale == 255 or scale == 0) and mean == 0 and dt == FLOAT: normalization */
+     else if ((fabsf(input->scale - 255) < 1e-6f || fabsf(input->scale) < 1e-6f) &&
+              fabsf(input->mean) < 1e-6 && input->dt == DNN_FLOAT)
+@@ -346,6 +410,12 @@ int ff_proc_from_frame_to_dnn(AVFrame *frame, DNNData *input, void *log_ctx)
+         ret = AVERROR(ENOSYS);
+         goto err;
+     }
++    DNNColorOrder current_color_order = map_dnn_color_order(frame->format);
++    if (input->order != current_color_order) {
++        DNNColorOrder dst_color_order = input->order;
++        input->order = current_color_order;
++        transpose(input, dst_color_order);
++    }
+ err:
+     av_free(middle_data);
+     return ret;
+diff --git a/libavfilter/vf_dnn_processing.c b/libavfilter/vf_dnn_processing.c
+index 066b00a898..9580f81cdb 100644
+--- a/libavfilter/vf_dnn_processing.c
++++ b/libavfilter/vf_dnn_processing.c
+@@ -78,14 +78,13 @@ static av_cold int init(AVFilterContext *context)
+ 
+ static const enum AVPixelFormat pix_fmts[] = {
+ #if 0
+-    AV_PIX_FMT_RGB24, AV_PIX_FMT_BGR24,
+     AV_PIX_FMT_GRAY8, AV_PIX_FMT_GRAYF32,
+     AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUV422P,
+     AV_PIX_FMT_YUV444P, AV_PIX_FMT_YUV410P, AV_PIX_FMT_YUV411P,
+     AV_PIX_FMT_NV12,
+     AV_PIX_FMT_NONE
+ #else
+-    AV_PIX_FMT_BGR24,
++    AV_PIX_FMT_RGB24, AV_PIX_FMT_BGR24,
+     AV_PIX_FMT_YUV420P,
+     AV_PIX_FMT_BGR48LE,
+     AV_PIX_FMT_RGB48LE,
+-- 
+2.34.1
+

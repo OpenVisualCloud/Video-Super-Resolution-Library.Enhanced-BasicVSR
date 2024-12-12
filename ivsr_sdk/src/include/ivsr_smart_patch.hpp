@@ -35,9 +35,9 @@ struct PatchConfig{
     int nif;
     int dims;
     PatchConfig(int w = 1920, int h = 1080, int pw = 1920, int ph = 1080, int b_w = 1,int b_h = 1,int s = 2,int n = 3,int d = 5)\
-    :patchWidth(pw),patchHeight(ph),
-    block_h(b_h),block_w(b_w),scale(s),
-    nif(n),dims(d){}
+    :patchWidth(pw), patchHeight(ph),
+    block_w(b_w), block_h(b_h), scale(s),
+    nif(n), dims(d){}
 
     friend std::ostream& operator<<(std::ostream& os, const PatchConfig& cfg) {
         return os << "PatchConfig [width]:" << cfg.patchWidth << " [height]:" << cfg.patchHeight

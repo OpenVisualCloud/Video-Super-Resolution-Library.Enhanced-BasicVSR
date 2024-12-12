@@ -30,22 +30,19 @@
 
 namespace IVSRThread {
 
-    // using Task = std::function<void()>;
-    using Task = InferTask::Ptr;
+// using Task = std::function<void()>;
+using Task = InferTask::Ptr;
 
-    struct Config {
-        std::string _name;          
-        int _threads = 5;           //!< Number of threads.
+struct Config {
+    std::string _name;
+    int _threads = 5;  //!< Number of threads.
 
-        Config(std::string name = "IVSRThreadsExecutor",
-               int threads = 1):
-               _name(name),
-               _threads(threads){};
-    };
+    Config(std::string name = "IVSRThreadsExecutor", int threads = 1) : _name(name), _threads(threads){};
+};
 
 /**
  * @class IVSRThreadExecutor
- * @brief Thread executor implementation. 
+ * @brief Thread executor implementation.
  *        It implements a common thread pool.
  */
 class IVSRThreadExecutor {
@@ -54,6 +51,7 @@ public:
      * @brief A shared pointer to a IVSRThreadExecutor object
      */
     using Ptr = std::shared_ptr<IVSRThreadExecutor>;
+    using CallbackFunc = std::function<void()>;
 
     /**
      * @brief Constructor
@@ -68,27 +66,27 @@ public:
 
     /**
      * @brief interface to enqueue task
-    */
+     */
     void Enqueue(Task task);
 
     /**
      * @brief interface to execute the task
-    */
+     */
     void Execute(Task task);
 
     /**
      * @brief interface to create task
-    */
-    Task CreateTask(char* inBuf, char* outBuf, InferFlag flag);
+     */
+    Task CreateTask(char* inBuf, char* outBuf, InferFlag flag, ivsr_cb_t* cb = NULL);
 
     /**
      * @brief interface to sync all the tasks
-    */
+     */
     void wait_all(int patchSize);
 
     /**
      * @brief interface to get total duration
-    */
+     */
     double get_duration_in_milliseconds();
 
 private:

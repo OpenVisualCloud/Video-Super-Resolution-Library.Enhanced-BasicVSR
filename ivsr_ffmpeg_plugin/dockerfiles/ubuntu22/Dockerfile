@@ -28,7 +28,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-ARG IMAGE=ubuntu:22.04
+ARG IMAGE=ubuntu@sha256:0e5e4a57c2499249aafc3b40fcd541e9a456aab7296681a3994d631587203f97
 FROM $IMAGE AS base
 
 RUN apt-get update && \
@@ -74,27 +74,31 @@ RUN echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] http
 #install opencv
 ARG WORKSPACE=/workspace
 ARG OPENCV_REPO=https://github.com/opencv/opencv/archive/4.5.3-openvino-2021.4.2.tar.gz
-RUN cd ${WORKSPACE} && \
-  wget -qO - ${OPENCV_REPO} | tar xz
+WORKDIR ${WORKSPACE}
+RUN wget -qO - ${OPENCV_REPO} | tar xz
 
-RUN cd ${WORKSPACE}/opencv-4.5.3-openvino-2021.4.2 && mkdir build && mkdir install && cd build && \
-  cmake \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_INSTALL_PREFIX=${WORKSPACE}/opencv-4.5.3-openvino-2021.4.2/install \
-    -DCMAKE_INSTALL_LIBDIR=lib \
-    -DOPENCV_GENERATE_PKGCONFIG=ON \
-    -DBUILD_DOCS=OFF \
-    -DBUILD_EXAMPLES=OFF \
-    -DBUILD_PERF_TESTS=OFF \
-    -DBUILD_TESTS=OFF \
-    -DWITH_OPENEXR=OFF \
-    -DWITH_OPENJPEG=OFF \
-    -DWITH_GSTREAMER=OFF \
-    -DWITH_JASPER=OFF \
-    .. && \
-  make -j "$(nproc)" && \
-  make install && \
-  cd ${WORKSPACE}/opencv-4.5.3-openvino-2021.4.2/install/bin && bash ./setup_vars_opencv4.sh
+WORKDIR ${WORKSPACE}/opencv-4.5.3-openvino-2021.4.2
+RUN mkdir build && mkdir install
+WORKDIR ${WORKSPACE}/opencv-4.5.3-openvino-2021.4.2/build
+RUN cmake \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=${WORKSPACE}/opencv-4.5.3-openvino-2021.4.2/install \
+      -DCMAKE_INSTALL_LIBDIR=lib \
+      -DOPENCV_GENERATE_PKGCONFIG=ON \
+      -DBUILD_DOCS=OFF \
+      -DBUILD_EXAMPLES=OFF \
+      -DBUILD_PERF_TESTS=OFF \
+      -DBUILD_TESTS=OFF \
+      -DWITH_OPENEXR=OFF \
+      -DWITH_OPENJPEG=OFF \
+      -DWITH_GSTREAMER=OFF \
+      -DWITH_JASPER=OFF \
+      .. && \
+    make -j16 && \
+    make install
+
+WORKDIR ${WORKSPACE}/opencv-4.5.3-openvino-2021.4.2/install/bin
+RUN bash ./setup_vars_opencv4.sh
 
 COPY ./ivsr_sdk/dgpu_umd_stable_555_0124.txt ${WORKSPACE}/
 RUN if [ "$OV_VERSION" = "2022.3" ]; then \
@@ -106,6 +110,7 @@ RUN if [ "$OV_VERSION" = "2022.3" ]; then \
     fi
 RUN rm ${WORKSPACE}/dgpu_umd_stable_555_0124.txt
 
+WORKDIR /tmp/gpu_deps
 RUN if [ "$OV_VERSION" = "2023.2" ]; then \
       # for GPU
       apt-get update; \
@@ -113,8 +118,10 @@ RUN if [ "$OV_VERSION" = "2023.2" ]; then \
       apt-get install -y --no-install-recommends ocl-icd-libopencl1; \
       apt-get clean; \
       rm -rf /var/lib/apt/lists/* && rm -rf /tmp/*; \
+    fi
+WORKDIR /tmp/gpu_deps
+RUN if [ "$OV_VERSION" = "2023.2" ]; then \
       # hadolint ignore=DL3003
-      mkdir /tmp/gpu_deps && cd /tmp/gpu_deps; \
       curl -L -O https://github.com/intel/compute-runtime/releases/download/23.05.25593.11/libigdgmm12_22.3.0_amd64.deb; \
       curl -L -O https://github.com/intel/intel-graphics-compiler/releases/download/igc-1.0.13700.14/intel-igc-core_1.0.13700.14_amd64.deb; \
       curl -L -O https://github.com/intel/intel-graphics-compiler/releases/download/igc-1.0.13700.14/intel-igc-opencl_1.0.13700.14_amd64.deb; \
@@ -172,17 +179,17 @@ RUN ln -sf $(which ${PYTHON}) /usr/local/bin/python && \
 
 ARG OV_REPO=https://github.com/openvinotoolkit/openvino.git
 ARG OV_BRANCH=${OV_VERSION}.0
-RUN git clone ${OV_REPO} ${IVSR_OV_DIR} && \
-    cd ${IVSR_OV_DIR} && \
-    git checkout ${OV_BRANCH} && \
-    git submodule update --init --recursive
+WORKDIR ${IVSR_OV_DIR}
 
 RUN git config --global user.email "noname@example.com" && \
   git config --global user.name "no name"
 
+RUN git clone ${OV_REPO} ${IVSR_OV_DIR} && \
+    git checkout ${OV_BRANCH} && \
+    git submodule update --init --recursive
+
 COPY ./ivsr_ov/based_on_openvino_2022.3/patches/*.patch ${IVSR_OV_DIR}/../patches/
 RUN if [ "$ENABLE_OV_PATCH" = "true" ] && [ "$OV_VERSION" = "2022.3" ]; then \
-        cd ${IVSR_OV_DIR}; \
         { set -e; \
             for patch_file in $(find ../patches -iname "*.patch" | sort -n); do \
             echo "Applying: ${patch_file}"; \
@@ -191,9 +198,8 @@ RUN if [ "$ENABLE_OV_PATCH" = "true" ] && [ "$OV_VERSION" = "2022.3" ]; then \
     fi
 RUN rm -rf ${IVSR_OV_DIR}/../patches
 
-RUN cd ${IVSR_OV_DIR} && \
-  mkdir build && cd build && \
-  cmake \
+WORKDIR ${IVSR_OV_DIR}/build
+RUN  cmake \
     -DCMAKE_INSTALL_PREFIX=${PWD}/../install \
     -DENABLE_INTEL_CPU=ON \
     -DENABLE_CLDNN=ON \
@@ -218,7 +224,7 @@ RUN cd ${IVSR_OV_DIR} && \
     -DENABLE_CPU_DEBUG_CAPS=ON \
     -DCMAKE_BUILD_TYPE=Release \
     .. && \
-  make -j $(nproc --all) && \
+  make -j16 && \
   make install && \
   bash ${PWD}/../install/setupvars.sh
 
@@ -232,16 +238,17 @@ ENV TBB_DIR=${CUSTOM_IE_DIR}/3rdparty/tbb/cmake
 ENV ngraph_DIR=${CUSTOM_IE_DIR}/cmake
 ENV LD_LIBRARY_PATH=${CUSTOM_IE_DIR}/3rdparty/tbb/lib:${CUSTOM_IE_LIBDIR}:$LD_LIBRARY_PATH
 
-COPY ./ivsr_sdk $IVSR_SDK_DIR
-RUN  mkdir -p ${IVSR_SDK_DIR}/build && \
-     cd ${IVSR_SDK_DIR}/build && \
-     cmake .. \
-       -DENABLE_LOG=OFF -DENABLE_PERF=OFF -DENABLE_THREADPROCESS=ON \
-       -DCMAKE_BUILD_TYPE=Release && \
-     make && \
-     echo "Building vsr sdk finished."
+COPY ./ivsr_sdk ${IVSR_SDK_DIR}
+RUN echo ${IVSR_SDK_DIR}
+WORKDIR ${IVSR_SDK_DIR}/build
+RUN cmake .. \
+      -DENABLE_LOG=OFF -DENABLE_PERF=OFF -DENABLE_THREADPROCESS=ON \
+      -DCMAKE_BUILD_TYPE=Release && \
+    make -j16 && \
+    make install && \
+    echo "Building vsr sdk finished."
 
-#build ffmpeg wiht iVSR SDK backend
+#build ffmpeg with iVSR SDK backend
 RUN apt-get update && \
   DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates tar g++ wget pkg-config nasm yasm libglib2.0-dev flex bison gobject-introspection libgirepository1.0-dev python3-dev \
@@ -269,12 +276,11 @@ ARG FFMPEG_DIR=${FFMPEG_IVSR_SDK_PLUGIN_DIR}/ffmpeg
 
 ARG FFMPEG_REPO=https://github.com/FFmpeg/FFmpeg.git
 ARG FFMPEG_VERSION=n6.1
+WORKDIR ${FFMPEG_DIR}
 RUN git clone ${FFMPEG_REPO} ${FFMPEG_DIR} && \
-    cd ${FFMPEG_DIR} && \
     git checkout ${FFMPEG_VERSION}
 COPY ./ivsr_ffmpeg_plugin/patches/*.patch ${FFMPEG_DIR}/
-RUN cd ${FFMPEG_DIR} && \
-  { set -e; \
+RUN { set -e; \
   for patch_file in $(find -iname "*.patch" | sort -n); do \
     echo "Applying: ${patch_file}"; \
     git am --whitespace=fix ${patch_file}; \
@@ -284,11 +290,10 @@ RUN if [ -f "${CUSTOM_OV_INSTALL_DIR}/setvars.sh" ]; then \
       . ${CUSTOM_OV_INSTALL_DIR}/setvars.sh ; \
     fi && \
     export LD_LIBRARY_PATH=${IVSR_SDK_DIR}/lib:${CUSTOM_IE_LIBDIR}:${TBB_DIR}/../lib:"$LD_LIBRARY_PATH" && \
-    cd ${FFMPEG_DIR} && \
     ./configure \
+    --extra-cflags=-fopenmp \
+    --extra-ldflags=-fopenmp \
     --enable-libivsr \
-    --extra-cflags=-I${IVSR_SDK_DIR}/include/ \
-    --extra-ldflags=-L${IVSR_SDK_DIR}/lib \
     --disable-static \
     --disable-doc \
     --enable-shared \
@@ -297,7 +302,7 @@ RUN if [ -f "${CUSTOM_OV_INSTALL_DIR}/setvars.sh" ]; then \
     --enable-libx264 \
     --enable-libx265 \
     --enable-version3 && \
-    make -j $(nproc --all) && \
+    make -j16 && \
     make install
 
 WORKDIR ${WORKSPACE}

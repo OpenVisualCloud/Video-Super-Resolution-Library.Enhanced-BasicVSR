@@ -7,7 +7,6 @@ set (TARGET_NAME "vsr_sample")
 
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib)
 
-SET(CMAKE_BUILD_TYPE "Debug")
 SET(CMAKE_CXX_FLAGS_DEBUG "$ENV{CXXFLAGS} -O0 -Wall -g2 -ggdb")
 SET(CMAKE_CXX_FLAGS_RELEASE "$ENV{CXXFLAGS} -O3 -Wall")
 
@@ -17,7 +16,7 @@ target_include_directories(${TARGET_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/.
 target_include_directories(${TARGET_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src/include/")
 target_link_libraries(${TARGET_NAME} PRIVATE ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/libivsr.so)
 
-
+add_dependencies(vsr_sample ivsr)
 find_package(OpenCV REQUIRED)
 target_include_directories(${TARGET_NAME} PRIVATE ${OpenCV_INCLUDE_DIRS})
 

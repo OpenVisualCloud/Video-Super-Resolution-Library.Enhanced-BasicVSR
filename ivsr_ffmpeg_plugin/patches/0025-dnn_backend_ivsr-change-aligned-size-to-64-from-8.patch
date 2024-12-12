@@ -1,0 +1,26 @@
+From b058f5bcd7d6d68f9038a1016476fdf1b3566300 Mon Sep 17 00:00:00 2001
+From: Xiaoxia Liang <xiaoxia.liang@intel.com>
+Date: Thu, 26 Sep 2024 22:47:25 +0800
+Subject: [PATCH] dnn_backend_ivsr: change aligned size to 64 from 8
+
+Signed-off-by: Xiaoxia Liang <xiaoxia.liang@intel.com>
+---
+ libavfilter/dnn/dnn_backend_ivsr.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/libavfilter/dnn/dnn_backend_ivsr.c b/libavfilter/dnn/dnn_backend_ivsr.c
+index e7e1d5ea2a..246fe5eb2b 100644
+--- a/libavfilter/dnn/dnn_backend_ivsr.c
++++ b/libavfilter/dnn/dnn_backend_ivsr.c
+@@ -109,7 +109,7 @@ static const AVOption dnn_ivsr_options[] = {
+ 
+ AVFILTER_DEFINE_CLASS(dnn_ivsr);
+ 
+-#define ALIGNED_SIZE 8
++#define ALIGNED_SIZE 64
+ 
+ static int get_datatype_size(DNNDataType dt)
+ {
+-- 
+2.34.1
+

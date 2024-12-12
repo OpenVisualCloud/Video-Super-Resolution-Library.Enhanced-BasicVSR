@@ -51,7 +51,7 @@ float* fill_patch(std::vector<int> patchCorners, float* inputBuf, std::vector<in
     
     // 1x3x3x1080x1920
     int B = inputDims[0], N = inputDims[1], C = inputDims[2], H = inputDims[3], W = inputDims[4];
-    int inp_sW = 1;
+    //int inp_sW = 1;
     int inp_sH = W;
     int inp_sC = H * W;
     int inp_sN = C * H * W;
@@ -89,13 +89,13 @@ void fill_image(std::vector<std::vector<int>> patchCorners, char* imgBuf, \
     std::vector<int> patchDims, std::vector<int> imgDims, std::vector<char*> patchList){
     int pB = patchDims[0], pN = patchDims[1], pC = patchDims[2], pH = patchDims[3], pW = patchDims[4];
     int iB = imgDims[0], iN = imgDims[1], iC = imgDims[2], iH = imgDims[3], iW = imgDims[4]; // imgDims?
-    int patch_sW = 1;
+    //int patch_sW = 1;
     int patch_sH = pW;
     int patch_sC = pH * pW;
     int patch_sN = pC * pH * pW;
     int patch_sB = pN * pC * pH * pW;
 
-    int img_sW = 1;
+    //int img_sW = 1;
     int img_sH = iW;
     int img_sC = iH * iW;
     int img_sN = iC * iH * iW;
@@ -107,7 +107,7 @@ void fill_image(std::vector<std::vector<int>> patchCorners, char* imgBuf, \
     float * img_ptr =(float *)imgBuf;
 
     // for each patch
-    for (int idx = 0; idx < patchCorners.size(); ++idx){
+    for (auto idx = 0u; idx < patchCorners.size(); ++idx){
         float* patchPtr = (float*)patchList[idx];
         auto patchCorner = patchCorners[idx];   
         
@@ -140,7 +140,7 @@ void fill_image(std::vector<std::vector<int>> patchCorners, char* imgBuf, \
     }
 
     // average each pixel
-    for(int id = 0; id < outputpixels; id++){
+    for(size_t id = 0; id < outputpixels; id++){
         *(img_ptr + id) /= *(pixelCounter + id);
     }
 
@@ -150,8 +150,8 @@ void fill_image(std::vector<std::vector<int>> patchCorners, char* imgBuf, \
 SmartPatch::SmartPatch(PatchConfig config, char* inBuf, char* outBuf, std::vector<int> inputShape, bool flag)
     :_inputPtr(inBuf),
     _outputPtr(outBuf),
-    _config(config),
     _inputShape(inputShape),
+    _config(config),
     flag(flag)
     {
         if (flag){

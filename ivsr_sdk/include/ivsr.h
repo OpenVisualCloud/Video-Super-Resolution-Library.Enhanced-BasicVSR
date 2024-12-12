@@ -24,6 +24,7 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 /**
  * @brief vsr context
@@ -39,7 +40,7 @@ typedef struct ivsr_callback {
 
 /**
  * @brief Intel VSR SDK version.
- * 
+ *
  */
 typedef struct ivsr_version {
     const char *api_version; //!< A string representing ibasicvsr sdk version>
@@ -47,7 +48,7 @@ typedef struct ivsr_version {
 
 /**
  * @brief Status for Intel VSR SDK
- * 
+ *
  */
 typedef enum {
     OK              = 0,
@@ -61,19 +62,29 @@ typedef enum {
 
 /**
  * @enum vsr sdk supported key.
- * 
+ * There are multiple configurations which contain resolutions,
+ *     INPUT_RES - it's for patch-based solution
+ *     RESHAPE_SETTINGS - it's to reshape the model's input tensor, NHW in current version
+ *     INPUT_TENSOR_DESC_SETTING - input data's tensor description
+ *     OUTPUT_TENSOR_DESC_SETTING - output data's tensor description
+ *
+ * RESHAPE_SETTINGS carries data for BATCH, WIDTH, HEIGH, in NHW format.
+ * We may extent the type from one vector to a structure which specifies layout and different dimensions
+ *
  */
 typedef enum {
-    INPUT_MODEL      = 0x1, //!< Required, Path to the input model file>
-    TARGET_DEVICE    = 0x2, //!< Required, device to run the inference>
+    INPUT_MODEL      = 0x1, //!< Required. Path to the input model file>
+    TARGET_DEVICE    = 0x2, //!< Required. Device to run the inference>
     BATCH_NUM        = 0x3, //!< Not Enabled Yet>
     VERBOSE_LEVEL    = 0x4, //!< Not Enabled Yet>
-    CUSTOM_LIB       = 0x5, //!< Path to extension lib file, required for loading Extended BasicVSR model>
-    CLDNN_CONFIG     = 0x6, //!< Path to custom op xml file, required for loading Extended BasicVSR model>
-    NUM_IFER_REQUEST = 0x7, //!< Not Enabled Yet>
+    CUSTOM_LIB       = 0x5, //!< Optional. Path to extension lib file, required for loading Extended BasicVSR model>
+    CLDNN_CONFIG     = 0x6, //!< Optional. Path to custom op xml file, required for loading Extended BasicVSR model>
+    INFER_REQ_NUMBER = 0x7, //!< Optional. To specify inference request number>
     PRECISION        = 0x8, //!< Optional. To set inference precision for hardware>
     RESHAPE_SETTINGS = 0x9, //!< Optional. To set reshape setting for the input model>
-    INPUT_RES        = 0xA, //!< Required, to specify the input frame resolution>
+    INPUT_RES        = 0xA, //!< Required. To specify the input frame resolution>
+    INPUT_TENSOR_DESC_SETTING     = 0xB,
+    OUTPUT_TENSOR_DESC_SETTING    = 0xC
 }IVSRConfigKey;
 
 typedef enum {
@@ -87,15 +98,23 @@ typedef enum {
 
 /**
  * @struct Intel VSR configuration.
- * 
+ *
  */
 typedef struct ivsr_config {
     IVSRConfigKey key;
-    const char *value;
+    const void *value;
     struct ivsr_config *next;
 }ivsr_config_t;
 
-
+typedef struct tensor_desc {
+    char precision[20];
+    char layout[20];
+    char tensor_color_format[20];
+    char model_color_format[20];
+    float      scale;
+    uint8_t    dimension;
+    size_t     shape[8];
+} tensor_desc_t;
 
 #ifdef __cplusplus
 extern "C" {
@@ -103,48 +122,50 @@ extern "C" {
 
 /**
  * @brief initialize the intel vsr sdk
- * 
+ *
  * @param configs configurations to initialize the intel vsr sdk.
  * @param handle handle used to process frames.
- * @return IVSRStatus 
+ * @return IVSRStatus
  */
 IVSRStatus ivsr_init(ivsr_config_t *configs, ivsr_handle *handle);
 
 /**
  * @brief process function
- * 
+ *
  * @param handle vsr process handle.
  * @param input_data input data buffer
  * @param output_data output data buffer
  * @param cb  callback function.
- * @return IVSRStatus 
+ * @return IVSRStatus
  */
 IVSRStatus ivsr_process(ivsr_handle handle, char* input_data, char* output_data, ivsr_cb_t* cb);
 
+IVSRStatus ivsr_process_async(ivsr_handle handle, char* input_data, char* output_data, ivsr_cb_t* cb);
+
 /**
  * @brief reset the configures for vsr
- * 
+ *
  * @param handle  vsr process handle
  * @param configs changed configurations for vsr.
- * @return IVSRStatus 
+ * @return IVSRStatus
  */
 IVSRStatus ivsr_reconfig(ivsr_handle handle, ivsr_config_t* configs);
 
 /**
- * @brief get attributes 
- * 
+ * @brief get attributes
+ *
  * @param handle vsr process handle
  * @param key indicate which type information to query.
  * @param value returned data.
- * @return IVSRStatus 
+ * @return IVSRStatus
  */
 IVSRStatus ivsr_get_attr(ivsr_handle handle, IVSRAttrKey key, void* value);
 
 /**
  * @brief free created vsr handle and conresponding resources.
- * 
+ *
  * @param  handle vsr process handle.
- * @return IVSRStatus 
+ * @return IVSRStatus
  */
 IVSRStatus ivsr_deinit(ivsr_handle handle);
 
