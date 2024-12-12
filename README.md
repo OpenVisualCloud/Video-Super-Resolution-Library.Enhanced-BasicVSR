@@ -91,8 +91,11 @@ Video Super Resolution (VSR) is a technique extensively employed in the AI media
   The input shape of this model is `[1, (channels * frames)9, H, W]`, and the output shape is `[1, (channels)3, 2xH, 2xW]`. For each inference, the input data is the `(n-1)th`, `(n)th`, and `(n+1)th` frames combined. The output data is the `(N)th` frame. For the first frame, the input data is `1st`, `1st`, `2nd` frames combined. For the last frame, the input data is the `(n-1)th`, `(n)th`, `(n)th` frames combined.<br>
 
 ### 1.4.2. Smart Video Processing (SVP)
-`SVP` is an AI-based video prefilter that enhances the perceptual rate-distortion in video encoding. With `SVP`, the encoded video streams maintain the same visual quality while reducing bandwidth, as measured by common video quality metrics (such as VMAF and (MS-)SSIM) and human perception.<br><br>
-The input and output shape of this model is `[1, (channels)3, H, W]`.<br>
+`SVP` is an AI-based video prefilter that enhances the perceptual rate-distortion in video encoding. With `SVP`, the encoded video streams maintain the same visual quality while reducing bandwidth.<br>
+
+Two SVP model variances are provided. `SVP-Basic` model is one efficiency-oriented designed model, it preserves fidelity while reducing the encoded bitrate. Modifications to images/video by SVP-Basic pre-processing cannot be perceived by human eyes while they can be measured by no to minor BD-rates degradation if it’s measured by SSIM or MS-SSIM metrics. SVP-Basic model is adaptive to almost all video scenarios, including live sport, live gaming, livestream sales, VOD, video conference, video surveillance, and 5G video ring.<br>
+`SVP-SE` model is designed for subjective video quality preservation with up to 50% bitrate saving. It targets human eyes plausible enhancement, reduces complex details like human-eyes insensitive patterns and noise; hence it can’t be evaluated by popular full-reference visual quality metrics including PSNR/SSIM/VMAF/etc. It improves the visibility and quality of visuals, making them more vivid and appealing to viewers, so it’s widely used in various industries, including entertainment, media and advertising, to enhance the visual experience and attract audience attention.<br><br>
+The input and output shape are `[1, (channels)3, H, W]` for RGB based model and `[1, (channels)1, H, W]` for Y based model.<br>
 
 # 2. Setup iVSR env on linux
 The software was validated on:
