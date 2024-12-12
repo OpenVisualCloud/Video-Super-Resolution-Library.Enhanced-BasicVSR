@@ -92,8 +92,8 @@ apt-get update && DEBIAN_FRONTEND=noninteractive && apt-get install -y --no-inst
         python3-dev libpython3-dev python3-pip
 
 apt-get clean
-pip --no-cache-dir install --upgrade pip setuptools
-pip install numpy
+pip --no-cache-dir install --upgrade pip==23.0 setuptools==65.5.0
+pip install numpy==1.23.5
 
 
 
