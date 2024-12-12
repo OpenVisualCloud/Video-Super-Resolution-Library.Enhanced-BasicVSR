@@ -28,4 +28,4 @@ jobs:
           sudo systemctl daemon-reload
           sudo systemctl restart docker
           cd ./ivsr_ffmpeg_plugin
-          ./build_docker.sh --enable_ov_patch true --ov_version 2022.3
+          ./build_docker.sh --ov_version 2024.5s --os_version rockylinux9
