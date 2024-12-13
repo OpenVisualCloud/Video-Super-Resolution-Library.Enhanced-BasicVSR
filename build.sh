@@ -25,7 +25,7 @@ prepare_dependencies() {
     apt-utils gpg-agent software-properties-common wget python3-dev libpython3-dev python3-pip
 }
 
-install_openvino_from_source() {
+config_git_users() {
   if [ -z "$(git config --global user.name)" ]; then
       git config --global user.name "no name"
   fi
@@ -33,7 +33,9 @@ install_openvino_from_source() {
   if [ -z "$(git config --global user.email)" ]; then
       git config --global user.email "noname@example.com"
   fi
+}
 
+install_openvino_from_source() {
   echo "Start building OpenVINO"
 
   ov_repo=https://github.com/openvinotoolkit/openvino.git
@@ -101,7 +103,7 @@ build_install_ivsr_sdk() {
 
 build_ffmpeg() {
   echo "Building FFMPEG with specific libraries support..."
-  sudo apt-get update && \
+  sudo -E apt-get update && \
     DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends \
     ca-certificates tar g++ wget pkg-config nasm yasm libglib2.0-dev flex bison gobject-introspection libgirepository1.0-dev \
     python3-dev libx11-dev libxv-dev libxt-dev libasound2-dev libpango1.0-dev libtheora-dev libvisual-0.4-dev libgl1-mesa-dev \
@@ -162,6 +164,7 @@ main() {
   done
 
   prepare_dependencies
+  config_git_users
   if [ "$ov_version" = "2022.3" ]; then
     install_openvino_from_source
   else
