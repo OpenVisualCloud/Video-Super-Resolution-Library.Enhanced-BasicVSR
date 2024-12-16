@@ -33,11 +33,9 @@
 5. [License](#5-license)
 # 1. Overview of iVSR
 ## 1.1 What is iVSR
-iVSR aims to facilitate AI media processing with exceptional quality and performance on Intel's hardware.
+iVSR facilitates AI media processing with exceptional quality and performance on Intel hardware.
 
-iVSR offers a patch-based, heterogeneous, multi-GPU, and multi-algorithm solution, 
-harnessing the full capabilities of Intel's CPUs and GPUs. 
-And iVSR is adaptable for deployment on a single device, a distributed system, cloud infrastructure, edge cloud, or K8S environment.
+iVSR offers a patch-based, heterogeneous, multi-GPU, and multi-algorithm solution, harnessing the full capabilities of Intel CPUs and GPUs. It is adaptable for deployment on a single device, a distributed system, cloud infrastructure, edge cloud, or K8S environment.
 
 <!-- ![overview](./docs/figs/iVSR.png) -->
 <div align=center>
@@ -46,10 +44,10 @@ And iVSR is adaptable for deployment on a single device, a distributed system, c
 
 ## 1.2 Why is iVSR needed
 
-- Simple APIs are provided, ensuring that any changes to the OpenVINO API remain hidden.
-- A patch-based solution is offered to facilitate inference on hardware with limited memory capacity. This is particularly useful for super-resolution of high-resolution input videos, such as 4K.
+- Simple APIs ensure that any changes to the OpenVINO API remain hidden.
+- A patch-based solution facilitates inference on hardware with limited memory capacity, particularly useful for super-resolution of high-resolution input videos, such as 4K.
 - The iVSR SDK includes features to safeguard AI models created by Intel, which contain Intel IP.
-- The iVSR SDK is versatile and can support a wide range of AI media processing algorithms.
+- The iVSR SDK is versatile and supports a wide range of AI media processing algorithms.
 - For specific algorithms, performance optimization can be executed to better align with customer requirements.
 
 ## 1.3 iVSR Components
@@ -61,31 +59,32 @@ For a detailed introduction to the iVSR SDK API, please refer to [this introduct
 
 We've also included a `vsr_sample` as a demonstration of its usage.
 
-This plugin is integrated into FFmpeg's [`dnn_processing` filter in the FFmpeg documentation](https://ffmpeg.org/ffmpeg-filters.html#dnn_005fprocessing-1) in the libavfilter library, serving as a new `ivsr` backend to this filter. Please note that the patches provided in this project are specifically for FFmpeg n6.1.<br>
 In order to support the widely-used media processing solution FFmpeg, we've provided an iVSR SDK plugin to simplify integration.<br>
-This plugin is integrated into FFmpeg's [`dnn_processing` filter](https://ffmpeg.org/ffmpeg-filters.html#dnn_005fprocessing-1) in the libavfilter library, serving as a new `ivsr` backend to this filter. Please note that the patches provided in this project are specifically for FFmpeg n6.1.<br>
+This plugin is integrated into FFmpeg's `dnn_processing` filter in the [FFmpeg documentation](https://ffmpeg.org/ffmpeg-filters.html#dnn_005fprocessing-1) in the libavfilter library, serving as a new `ivsr` backend to this filter. Please note that the patches provided in this project are specifically for FFmpeg n6.1.<br>
 
 ### 1.3.3 OpenVINO patches and extension
 In [this folder](./ivsr_ov/based_on_openvino_2022.3/patches), you'll find patches for OpenVINO that enable the Enhanced BasicVSR model. These patches utilize OpenVINO's [Custom OpenVINO™ Operations](https://docs.openvino.ai/latest/openvino_docs_Extensibility_UG_add_openvino_ops.html) feature, which allows users to support models with custom operations not inherently supported by OpenVINO.<br>
 These patches are specifically for OpenVINO 2022.3, meaning the Enhanced BasicVSR model will only work on OpenVINO 2022.3 with these patches applied.<br>
 
-
 ## 1.4 Capabilities of iVSR
-Currently, iVSR offers two AI media processing functionalities: Video Super Resolution (VSR), and Smart Video Processing (SVP) for bandwidth optimization. Both functionalities can be run on Intel CPUs and Intel GPUs (including Flex170, Arc770) via OpenVINO and FFmpeg.
-
+Currently, iVSR offers two AI media processing functionalities: Video Super Resolution (VSR) and Smart Video Processing (SVP) for bandwidth optimization. Both functionalities can be run on Intel CPUs and Intel GPUs (including Flex170, Arc770) via OpenVINO and FFmpeg.
 
 ### 1.4.1 Video Super Resolution (VSR)
-Video Super Resolution (VSR) is a technique extensively employed in the AI media enhancement domain to upscale low-resolution videos to high-resolution. iVSR supports `Enhanced BasicVSR`, `Enhanced EDSR`, `TSENet`, and has the capability to be extended to support additional models.
+Video Super Resolution (VSR) is a technique extensively employed in the AI media enhancement domain to upscale low-resolution videos to high-resolution. iVSR supports `Enhanced BasicVSR`, `Enhanced EDSR`, and `TSENet`. It also has the capability to be extended to support additional models.
 
 - #### i. Enhanced BasicVSR
   `BasicVSR` is a publicly available AI-based VSR algorithm. For more details on the public `BasicVSR`, please refer to this [paper](https://arxiv.org/pdf/2012.02181.pdf).<br><br>
-  We have improved the public model to attain superior visual quality and reduced computational complexity,  named `Enhanced BasicVSR`. The performance of the `Enhanced BasicVSR` model inference has also been optimized for Intel GPUs. Please note that this optimization is specific to OpenVINO 2022.3. Therefore, the Enhanced BasicVSR model only works with OpenVINO 2022.3 with the applied patches.<br><br>
-  The input shape of this model is `[1, (channels)3, (frames)3, H, W]`, and the output shape is `[1, (channels)3, (frames)3, 2xH, 2xW]`.
+  We have improved the public model to attain superior visual quality and reduced computational complexity. This improved model is named `Enhanced BasicVSR`. The performance of the `Enhanced BasicVSR` model inference has also been optimized for Intel GPUs. Please note that this optimization is specific to OpenVINO 2022.3. Therefore, the Enhanced BasicVSR model only works with OpenVINO 2022.3 with the applied patches.<br><br>
+  The input shape of this model and the output shape are:
+  ```plaintext
+  Input shape: [1, (channels)3, (frames)3, H, W]
+  Output shape: [1, (channels)3, (frames)3, 2xH, 2xW]
+  ```
 
 - #### ii. Enhanced EDSR
   `EDSR` is another publicly available AI-based single image SR algorithm. For more details on the public EDSR, please refer to this [paper](https://arxiv.org/pdf/1707.02921.pdf)<br><br>
-  We have improved the public `EDSR` model to reduce the computational complexity by over 79% compared to Enhanced BasicVSR, while maintaining similar visual quality, named `Enhanced EDSR`.<br><br>
-  The input shape of this model is `[1, (channels)3, H, W]`, and the output shape is `[1, (channels)3, 2xH, 2xW]`:
+  We have improved the public `EDSR` model to reduce the computational complexity by over 79% compared to Enhanced BasicVSR. This improvement maintains similar visual quality and is named `Enhanced EDSR`.<br><br>
+  The input shape of this model and the output shape are:
   ```plaintext
   Input shape: [1, (channels)3, H, W]
   Output shape: [1, (channels)3, 2xH, 2xW]
@@ -94,13 +93,22 @@ Video Super Resolution (VSR) is a technique extensively employed in the AI media
 - #### iii. TSENet
   `TSENet` is one multi-frame SR algorithm derived from [ETDS](https://github.com/ECNUSR/ETDS).<br><br>
   We provide a preview version of the feature to support this model in the SDK and its plugin. Please contact your Intel representative to obtain the model package.<br><br>
-  The input shape of this model is `[1, (channels * frames)9, H, W]`, and the output shape is `[1, (channels)3, 2xH, 2xW]`. For each inference, the input data is the `(n-1)th`, `(n)th`, and `(n+1)th` frames combined. The output data is the `(N)th` frame. For the first frame, the input data is `1st`, `1st`, `2nd` frames combined. For the last frame, the input data is the `(n-1)th`, `(n)th`, `(n)th` frames combined.<br>
+  The input shape of this model and the output shape are:
+  ```plaintext
+  Input shape: [1, (channels * frames)9, H, W]
+  Output shape: [1, (channels)3, 2xH, 2xW]
+  ```
+  For each inference, the input data is the `(n-1)th`, `(n)th`, and `(n+1)th` frames combined. The output data is the `(N)th` frame. For the first frame, the input data is `1st`, `1st`, `2nd` frames combined. For the last frame, the input data is the `(n-1)th`, `(n)th`, `(n)th` frames combined.
 
 ### 1.4.2. Smart Video Processing (SVP)
-`SVP` is an AI-based video prefilter that enhances the perceptual rate-distortion in video encoding. With `SVP`, the encoded video streams maintain the same visual quality while reducing bandwidth.<br>
+`SVP` is an AI-based video prefilter that enhances perceptual rate-distortion in video encoding. With `SVP`, encoded video streams maintain the same visual quality while reducing bandwidth usage.<br>
 
-Two SVP model variances are provided. `SVP-Basic` model is one efficiency-oriented designed model, it preserves fidelity while reducing the encoded bitrate. Modifications to images/video by SVP-Basic pre-processing cannot be perceived by human eyes while they can be measured by no to minor BD-rates degradation if it’s measured by SSIM or MS-SSIM metrics. SVP-Basic model is adaptive to almost all video scenarios, including live sport, live gaming, livestream sales, VOD, video conference, video surveillance, and 5G video ring.<br>
-`SVP-SE` model is designed for subjective video quality preservation with up to 50% bitrate saving. It targets human eyes plausible enhancement, reduces complex details like human-eyes insensitive patterns and noise; hence it can’t be evaluated by popular full-reference visual quality metrics including PSNR/SSIM/VMAF/etc. It improves the visibility and quality of visuals, making them more vivid and appealing to viewers, so it’s widely used in various industries, including entertainment, media and advertising, to enhance the visual experience and attract audience attention.<br><br>
+Two SVP model variants are provided:
+
+- **SVP-Basic**: This model is designed for efficiency, preserving fidelity while reducing the encoded bitrate. Modifications made by SVP-Basic are imperceptible to the human eye but can be measured by minor BD-rate degradation when evaluated using SSIM or MS-SSIM metrics. SVP-Basic is adaptable to various video scenarios, including live sports, gaming, livestream sales, VOD, video conferencing, video surveillance, and 5G video streaming.<br>
+
+- **SVP-SE**: This model focuses on subjective video quality preservation, achieving up to 50% bitrate savings. It enhances visuals by reducing complex details and noise that are less perceptible to human eyes. As a result, it cannot be evaluated by traditional full-reference visual quality metrics like PSNR, SSIM, or VMAF. SVP-SE improves the visibility and quality of visuals, making them more vivid and appealing, which is beneficial in industries such as entertainment, media, and advertising.<br>
+
 The input and output shapes are:
 - RGB based model: 
   ```plaintext
@@ -137,21 +145,21 @@ Refer to this [instruction](https://dgpu-docs.intel.com/driver/installation.html
 ## 2.2 Install dependencies and build iVSR manually
 
 Here are two guides for your reference:<br>
-One is generic in case you are familiar with Intel® devices and have experience in Intel® developed software before, which you can follow the official steps to build OpenCV and OpenVINO by source code. You can get it from the [Generic manual building guide](docs/generic_manual_build.md#generic-manual-build-steps-for-ffmpeg--ivsr-plugin-software)<br>
-Another option is a tutorial for absolute beginners to build the project step-by-step on a clean Ubuntu OS installed machine. [Quick manual building guide](docs/quick_try_manual_build.md#manual-build-steps-for-ffmpeg--ivsr-plugin-software-on-ubuntu)
+1. **Generic Manual Building Guide**: If you are familiar with Intel® devices and have experience with Intel® developed software, follow the official steps to build OpenCV and OpenVINO from source code. Refer to the [Generic manual building guide](docs/generic_manual_build.md#generic-manual-build-steps-for-ffmpeg--ivsr-plugin-software).<br>
+2. **Quick Manual Building Guide**: For absolute beginners, this tutorial provides step-by-step instructions to build the project on a clean Ubuntu OS. Refer to the [Quick manual building guide](docs/quick_try_manual_build.md#manual-build-steps-for-ffmpeg--ivsr-plugin-software-on-ubuntu).<br>
 
-## 2.3 Install dependencies and build iVSR by scripts
-We provide shell scripts `build.sh` to assist in building the dependencies from source code and setting up the environment from scratch.<br>
+## 2.3 Install dependencies and build iVSR using scripts
+We provide a `build.sh` script to facilitate building the entire project from source on a clean Ubuntu 22.04-based Linux machine.
 
 ```bash
 chmod a+x ./build.sh
-./build.sh  --ov_version [2022.3|2023.2|2024.5]
+./build.sh --ov_version [2022.3|2023.2|2024.5]
 ```
 
-The scripts accept the following input parameters:
-- `ov_version`: Specifies the OpenVINO version. iVSR supports `2022.3`, `2023.2` and `2024.5`. Note that running the Enhanced BasicVSR model requires `2022.3`.<br>
+The script accepts the following parameter:
+- `ov_version`: Specifies the OpenVINO version. iVSR supports `2022.3`, `2023.2`, and `2024.5`. Note that running the Enhanced BasicVSR model requires `2022.3`.
 
-After the build is done, please do environment variables setting. For OpenVINO 2022.3,
+After the build is complete, set the environment variables. For OpenVINO 2022.3:
 
 ```bash
 source <workspace>/ivsr_ov/based_on_openvino_2022.3/openvino/install/setupvars.sh
@@ -159,13 +167,13 @@ source <workspace>/ivsr_ov/based_on_openvino_2022.3/openvino/install/setupvars.s
 
 For other OpenVINO versions installed via official packages, manual environment setup is not required.
 
-Once the build is successfully completed, refer to [section 3.2](#32-run-with-ffmpeg) for instructions on using the FFmpeg command line to run the pipelines. Feel free to modify and update these scripts as needed. For newly released OpenVINO versions, please follow the [manual build](#22-install-dependencies-and-build-ivsr-manually) guide.<br>
+Once the build is successfully completed, refer to [section 3.2](#32-run-with-ffmpeg) for instructions on using the FFmpeg command line to run the pipelines. Feel free to modify and update these scripts as needed. For newly released OpenVINO versions, please follow the [manual build](#22-install-dependencies-and-build-ivsr-manually) guide.
 
 ## 2.4 Install dependencies and build iVSR using Dockerfile
-Dockerfiles are provided to streamline the environment setup process. Follow the guide to build the Docker image and run the application in Docker containers: [Docker image build guide](docs/docker_image_build.md#docker-image-build-guide).<br>
+To simplify the environment setup, Dockerfiles are provided. Follow the [Docker image build guide](docs/docker_image_build.md#docker-image-build-guide) to build the Docker image and run the application in Docker containers.
 
 # 3. How to use iVSR
-To run inference on the iVSR SDK, you can use either the `vsr_sample` or the `ffmpeg` integrated with iVSR plugin. Before executing them, set up the environment with the following commands:
+You can run inference on the iVSR SDK using either the `vsr_sample` or the `ffmpeg` integrated with the iVSR plugin. Before running them, set up the environment with the following commands:
 ```bash
 source <OpenVINO installation dir>/install/setupvars.sh
 export LD_LIBRARY_PATH=<Package dir>/ivsr_sdk/lib:<OpenCV installation folder>/install/lib:$LD_LIBRARY_PATH
@@ -181,7 +189,5 @@ After applying the FFmpeg plugin patches and building FFmpeg, refer to [the FFmp
 # 4. Model files
 iVSR supports only models in OpenVINO IR format. Contact your Intel representative to obtain the model files, as they are not included in the package.
 
-
 # 5. License
 iVSR is licensed under the BSD 3-clause license. See [LICENSE](LICENSE.md) for details.
-
