@@ -1,6 +1,6 @@
 <!-- ![logo](./docs/figs/iVSR.png) -->
 <div align=center>
-<img src="./docs/figs/logo.bmp" width = 20% height = 20% />
+<img src="./docs/figs/logo.png" width = 20% height = 20% />
 </div>
 
 <div align=center>
@@ -8,7 +8,7 @@
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/OpenVisualCloud/iVSR/badge)](https://api.securityscorecards.dev/projects/github.com/OpenVisualCloud/iVSR)
 [![OpenSSF Best Practices](https://bestpractices.coreinfrastructure.org/projects/9795/badge)](https://bestpractices.coreinfrastructure.org/projects/9795)
 [![Dependency Review](https://github.com/OpenVisualCloud/iVSR/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/OpenVisualCloud/iVSR/actions/workflows/dependency-review.yml)
-[![CodeQL](https://github.com/OpenVisualCloud/iVSR/actions/workflows/codeql.yml/badge.svg)](https://github.com/OpenVisualCloud/iVSR/actions/workflows/codeql.yml)<br>
+[![CodeQL](https://github.com/OpenVisualCloud/iVSR/actions/workflows/codeql.yml/badge.svg)](https://github.com/OpenVisualCloud/iVSR/actions/workflows/codeql.yml)  
 [![License](https://img.shields.io/badge/license-BSD_3_Clause-stable.svg)](https://github.com/OpenVisualCloud/iVSR/blob/master/LICENSE.md)
 [![Contributions](https://img.shields.io/badge/contributions-welcome-blue.svg)](https://github.com/OpenVisualCloud/iVSR/wiki)
 [![Ubuntu-DockerFile-Build](https://github.com/OpenVisualCloud/iVSR/actions/workflows/ubuntu-build-docker.yml/badge.svg)](https://github.com/OpenVisualCloud/iVSR/actions/workflows/ubuntu-build-docker.yml)
@@ -57,9 +57,11 @@ This repository or package includes the following major components:
 
 ### 1.3.1 iVSR SDK
 The iVSR SDK is a middleware library that supports various AI video processing filters. It is designed to accommodate different AI inference backends, although currently, it only supports OpenVINO.<br>
-For a detailed introduction to the iVSR SDK API, please refer to [this introduction](./ivsr_sdk/README.md#api-introduction).We've also included a `vsr_sample` as a demonstration of its usage.<br>
+For a detailed introduction to the iVSR SDK API, please refer to [this introduction](./ivsr_sdk/README.md#api-introduction).
 
-### 1.3.2 iVSR FFmpeg plugin
+We've also included a `vsr_sample` as a demonstration of its usage.
+
+This plugin is integrated into FFmpeg's [`dnn_processing` filter in the FFmpeg documentation](https://ffmpeg.org/ffmpeg-filters.html#dnn_005fprocessing-1) in the libavfilter library, serving as a new `ivsr` backend to this filter. Please note that the patches provided in this project are specifically for FFmpeg n6.1.<br>
 In order to support the widely-used media processing solution FFmpeg, we've provided an iVSR SDK plugin to simplify integration.<br>
 This plugin is integrated into FFmpeg's [`dnn_processing` filter](https://ffmpeg.org/ffmpeg-filters.html#dnn_005fprocessing-1) in the libavfilter library, serving as a new `ivsr` backend to this filter. Please note that the patches provided in this project are specifically for FFmpeg n6.1.<br>
 
@@ -83,7 +85,11 @@ Video Super Resolution (VSR) is a technique extensively employed in the AI media
 - #### ii. Enhanced EDSR
   `EDSR` is another publicly available AI-based single image SR algorithm. For more details on the public EDSR, please refer to this [paper](https://arxiv.org/pdf/1707.02921.pdf)<br><br>
   We have improved the public `EDSR` model to reduce the computational complexity by over 79% compared to Enhanced BasicVSR, while maintaining similar visual quality, named `Enhanced EDSR`.<br><br>
-  The input shape of this model is `[1, (channels)3, H, W]`, and the output shape is `[1, (channels)3, 2xH, 2xW]`.
+  The input shape of this model is `[1, (channels)3, H, W]`, and the output shape is `[1, (channels)3, 2xH, 2xW]`:
+  ```plaintext
+  Input shape: [1, (channels)3, H, W]
+  Output shape: [1, (channels)3, 2xH, 2xW]
+  ```
 
 - #### iii. TSENet
   `TSENet` is one multi-frame SR algorithm derived from [ETDS](https://github.com/ECNUSR/ETDS).<br><br>
@@ -95,24 +101,35 @@ Video Super Resolution (VSR) is a technique extensively employed in the AI media
 
 Two SVP model variances are provided. `SVP-Basic` model is one efficiency-oriented designed model, it preserves fidelity while reducing the encoded bitrate. Modifications to images/video by SVP-Basic pre-processing cannot be perceived by human eyes while they can be measured by no to minor BD-rates degradation if it’s measured by SSIM or MS-SSIM metrics. SVP-Basic model is adaptive to almost all video scenarios, including live sport, live gaming, livestream sales, VOD, video conference, video surveillance, and 5G video ring.<br>
 `SVP-SE` model is designed for subjective video quality preservation with up to 50% bitrate saving. It targets human eyes plausible enhancement, reduces complex details like human-eyes insensitive patterns and noise; hence it can’t be evaluated by popular full-reference visual quality metrics including PSNR/SSIM/VMAF/etc. It improves the visibility and quality of visuals, making them more vivid and appealing to viewers, so it’s widely used in various industries, including entertainment, media and advertising, to enhance the visual experience and attract audience attention.<br><br>
-The input and output shape are `[1, (channels)3, H, W]` for RGB based model and `[1, (channels)1, H, W]` for Y based model.<br>
+The input and output shapes are:
+- RGB based model: 
+  ```plaintext
+  Input shape: [1, (channels)3, H, W]
+  Output shape: [1, (channels)3, H, W]
+  ```
+- Y based model:
+  ```plaintext
+  Input shape: [1, (channels)1, H, W]
+  Output shape: [1, (channels)1, H, W]
+  ```
+<br>
 
 # 2. Setup iVSR env on linux
 The software was validated on:
 - Intel Xeon hardware platform
-- (Optional) Intel Data Center GPU Flex 170(*aka* ATS-M1 150W)
-- Host OS: Linux based OS (Ubuntu 22.04 or Rocky Linux 9.3)
-- Docker OS: Ubuntu 22.04 or Rocky Linux 9.3
-- OpenVINO: [2022.3](https://github.com/openvinotoolkit/openvino/tree/2022.3.0) or [2023.2](https://github.com/openvinotoolkit/openvino/tree/2023.2.0) or [2024.5](https://github.com/openvinotoolkit/openvino/tree/2024.5.0)
+- (Optional) Intel® Data Center GPU Flex 170(*aka* ATS-M1 150W)
+- Host OS: Linux-based OS (Ubuntu 22.04 or Rocky Linux 9.3)
+- Docker-based OS: Ubuntu 22.04 or Rocky Linux 9.3
+- OpenVINO: [2022.3](https://github.com/openvinotoolkit/openvino/tree/2022.3.0), [2023.2](https://github.com/openvinotoolkit/openvino/tree/2023.2.0), or [2024.5](https://github.com/openvinotoolkit/openvino/tree/2024.5.0)
 - FFmpeg: [n6.1](https://github.com/FFmpeg/FFmpeg/tree/n6.1)
 
-Building iVSR requires the installation of the GPU driver(optional), OpenCV, OpenVINO, and FFmpeg.<br>
+Building iVSR requires the installation of the GPU driver (optional), OpenCV, OpenVINO, and FFmpeg.  
 We provide **three** ways to install requirements and build iVSR SDK & iVSR FFmpeg plugin:<br>
 1. [Install dependencies and build iVSR manually](#22-install-dependencies-and-build-ivsr-manually)<br>
 2. [Install dependencies and build iVSR by scripts](#23-install-dependencies-and-build-ivsr-by-scripts)<br>
 3. [Install dependencies and build iVSR by Dockerfile](#24-install-dependencies-and-build-ivsr-by-dockerfile)<br>
 
-Note that to run inference on a **GPU**, it is necessary to have **kernel packages** installed on the bare metal system beforehand. See [Install GPU kernel packages ](#21-optional-install-gpu-kernel-packages) for details.<br>
+Note that to run inference on a **GPU**, it is necessary to have **kernel packages** installed on the bare metal system beforehand. See [Install GPU kernel packages](#21-optional-install-gpu-kernel-packages) for details.<br>
 
 ## 2.1 (Optional) Install GPU kernel packages
 Refer to this [instruction](https://dgpu-docs.intel.com/driver/installation.html#ubuntu-package-installation) for the installation guide on Ubuntu. GPU runtime driver/packages are also installed in script and dockerfile provided.
@@ -120,46 +137,49 @@ Refer to this [instruction](https://dgpu-docs.intel.com/driver/installation.html
 ## 2.2 Install dependencies and build iVSR manually
 
 Here are two guides for your reference:<br>
-One is generic in case you are familiar with Intel® devices and have experience in Intel® developed software before, which you can follow the official steps to build OpenCV and OpenVINO by source code. You can get it from: [Generic manual building guide](docs/generic_manual_build.md#generic-manual-build-steps-for-ffmpeg--ivsr-plugin-software)<br>
-Another option is a tutorial for absolute beginners to try to build the project following every step in the guide based on a clean Ubuntu OS installed machine. [Quick manual building guide](docs/quick_try_manual_build.md#manual-build-steps-for-ffmpeg--ivsr-plugin-software-on-ubuntu)
+One is generic in case you are familiar with Intel® devices and have experience in Intel® developed software before, which you can follow the official steps to build OpenCV and OpenVINO by source code. You can get it from the [Generic manual building guide](docs/generic_manual_build.md#generic-manual-build-steps-for-ffmpeg--ivsr-plugin-software)<br>
+Another option is a tutorial for absolute beginners to build the project step-by-step on a clean Ubuntu OS installed machine. [Quick manual building guide](docs/quick_try_manual_build.md#manual-build-steps-for-ffmpeg--ivsr-plugin-software-on-ubuntu)
 
 ## 2.3 Install dependencies and build iVSR by scripts
-We provide shell scripts `build_ivsr.sh` and `ivsr_setupvar.sh` to assist in building the dependencies from source code and setting up the environment from scratch.<br>
+We provide shell scripts `build.sh` to assist in building the dependencies from source code and setting up the environment from scratch.<br>
+
 ```bash
-#ivsr environment building
-chmod a+x ./build_ivsr.sh
-sudo ./build_ivsr.sh --enable_ov_patch <true/false> --enable_compile_ffmpeg true --ov_version <2022.3|2023.2|2024.5>
-#environment variables setting
-source ./ivsr_setupvar.sh --ov_version <2022.3|2023.2|2024.5>
+chmod a+x ./build.sh
+./build.sh  --ov_version [2022.3|2023.2|2024.5]
 ```
-The scripts accept the following input parameters:<br>
-- `enable_ov_patch`: Determines whether to enable OpenVINO patches, which are necessary to run the Enhanced BasicVSR model.<br>
-- `enable_compile_ffmpeg`: Determines whether to compile FFmpeg. Set this to `false` if you're only using the iVSR SDK sample.<br>
+
+The scripts accept the following input parameters:
 - `ov_version`: Specifies the OpenVINO version. iVSR supports `2022.3`, `2023.2` and `2024.5`. Note that running the Enhanced BasicVSR model requires `2022.3`.<br>
 
-Feel free to modify and update these scripts as per your requirements. For new released OpenVINO version, please follow the [manual build](#22-install-dependencies-and-build-ivsr-manually) guide.<br>
+After the build is done, please do environment variables setting. For OpenVINO 2022.3,
 
+```bash
+source <workspace>/ivsr_ov/based_on_openvino_2022.3/openvino/install/setupvars.sh
+```
 
-## 2.4 Install dependencies and build iVSR by Dockerfile
-Dockerfiles are also provided to expedite the environment setup process. Follow the guide to build the docker image and run the application in the docker containers: [Docker image build guide](docs/docker_image_build.md#docker-image-build-guide).<br>
+For other OpenVINO versions installed via official packages, manual environment setup is not required.
+
+Once the build is successfully completed, refer to [section 3.2](#32-run-with-ffmpeg) for instructions on using the FFmpeg command line to run the pipelines. Feel free to modify and update these scripts as needed. For newly released OpenVINO versions, please follow the [manual build](#22-install-dependencies-and-build-ivsr-manually) guide.<br>
+
+## 2.4 Install dependencies and build iVSR using Dockerfile
+Dockerfiles are provided to streamline the environment setup process. Follow the guide to build the Docker image and run the application in Docker containers: [Docker image build guide](docs/docker_image_build.md#docker-image-build-guide).<br>
 
 # 3. How to use iVSR
-Both `vsr_sample` and FFmpeg integration are provided to run inference on the iVSR SDK. Execute the following commands to setup the env before executing them. <br>
+To run inference on the iVSR SDK, you can use either the `vsr_sample` or the `ffmpeg` integrated with iVSR plugin. Before executing them, set up the environment with the following commands:
 ```bash
 source <OpenVINO installation dir>/install/setupvars.sh
 export LD_LIBRARY_PATH=<Package dir>/ivsr_sdk/lib:<OpenCV installation folder>/install/lib:$LD_LIBRARY_PATH
 ```
-Please note that the current solution is of `pre-production` quality.<br>
-
+Note that the current solution is of `pre-production` quality.
 
 ## 3.1 Run with iVSR SDK sample
-`vsr_sample` has been developed using the iVSR SDK and OpenCV. For guidance on how to run inference with it, please refer to this [section](./ivsr_sdk/README.md#vsr-sample).<br>
+The `vsr_sample` is developed using the iVSR SDK and OpenCV. For detailed instructions on running inference with it, refer to this [section](./ivsr_sdk/README.md#vsr-sample).
 
 ## 3.2 Run with FFmpeg
-Once the FFmpeg plugin patches have been applied and FFmpeg has been built, you can refer to [the FFmpeg cmd line samples](ivsr_ffmpeg_plugin/README.md#how-to-run-inference-with-ffmpeg-plugin) for instructions on how to run inference with FFmpeg.<br>
+After applying the FFmpeg plugin patches and building FFmpeg, refer to [the FFmpeg command line samples](ivsr_ffmpeg_plugin/README.md#how-to-run-inference-with-ffmpeg-plugin) for instructions on running inference with FFmpeg.
 
 # 4. Model files
-Only models in OpenVINO IR format is supported by iVSR. Please reach out to your Intel representative to obtain the model files which are not included in the package.<br>
+iVSR supports only models in OpenVINO IR format. Contact your Intel representative to obtain the model files, as they are not included in the package.
 
 
 # 5. License

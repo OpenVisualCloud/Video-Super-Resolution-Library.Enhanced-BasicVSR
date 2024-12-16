@@ -84,7 +84,7 @@ cd <workspace>/ivsr/ivsr_ffmpeg_plugin/ffmpeg
 git checkout n6.1
 
 # Apply patches
-copy -rf /path/to/patches/*.patch .
+cp -rf /path/to/patches/*.patch .
 git am --whitespace=fix *.patch
 
 ./configure \
@@ -101,7 +101,7 @@ git am --whitespace=fix *.patch
 make -j$(nproc)
 sudo make install
 
-# Set the library path for FFmpeg or run ldconfig
+# Set the library path for FFmpeg to ensure it can find the necessary shared libraries
 export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 
 # Run ffmpeg to test if it can run successfully
@@ -127,14 +127,17 @@ curl -L -O https://github.com/intel/compute-runtime/releases/download/24.31.3050
 sudo dpkg -i ./*.deb
 rm -Rf /tmp/gpu_deps
 ```
+Also, you can download the latest gpu driver from the [official website](https://github.com/intel/compute-runtime/releases).
 
-Also, you can download the latest gpu driver from the official website: https://github.com/intel/compute-runtime/releases
 ### 7. Environment Configuration for GPU
 
 Set the environment variables required for GPU drivers:
 
 ```bash
+# Set the driver name for VA-API to use Intel's iHD driver
 export LIBVA_DRIVER_NAME=iHD
+
+# Set the path where VA-API can find the driver
 export LIBVA_DRIVERS_PATH=/usr/lib/x86_64-linux-gnu/dri
 ```
 
@@ -165,8 +168,9 @@ cmake \
     -DWITH_FFMPEG=OFF \
     -DPYTHON3_EXECUTABLE=/usr/bin/python3 \
     ..
+
 make -j "$(nproc)"
 sudo make install
+# The setup_vars_opencv4.sh script sets up the environment variables required for OpenCV.
 cd ${OPENCV_BASE}/install/bin && bash ./setup_vars_opencv4.sh
-
 ```
