@@ -110,8 +110,8 @@ jobs:
       uses: advanced-security/filter-sarif@v1
       with:
         patterns: |
-          -'**/ffmpeg*'
-          -'**/openvino*'
+          -ivsr_ffmpeg_plugin/ffmpeg/**/*
+          -ivsr_ov/based_on_openvino_2022.3/openvino/**/*
         input: results/cpp.sarif
         output: results/cpp.sarif
 
