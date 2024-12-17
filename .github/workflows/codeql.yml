@@ -107,6 +107,6 @@ jobs:
     - name: filter-sarif
       uses: advanced-security/filter-sarif@v1
       with:
-        paths-ignore: |
-          '**/ffmpeg*'
-          '**/openvino*'
+        patterns: |
+          -'**/ffmpeg*'
+          -'**/openvino*'
