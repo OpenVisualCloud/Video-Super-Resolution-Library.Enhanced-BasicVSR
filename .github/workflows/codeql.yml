@@ -103,10 +103,26 @@ jobs:
       uses: github/codeql-action/analyze@b611370bb5703a7efb587f9d136a52ea24c5c38c # v3.25.11
       with:
         category: "/language:${{matrix.language}}"
+        output: results
+        upload: failure-only
 
-    - name: filter-sarif
+    - name: Filter Sarif
       uses: advanced-security/filter-sarif@v1
       with:
         patterns: |
           -'**/ffmpeg*'
           -'**/openvino*'
+        input: results/cpp.sarif
+        output: results/cpp.sarif
+
+    - name: Upload SARIF
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: results/cpp.sarif
+
+    - name: Upload loc as a Build Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: sarif-results
+        path: sarif-results
+        retention-days: 1
