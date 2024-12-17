@@ -101,7 +101,7 @@ void fill_image(std::vector<std::vector<int>> patchCorners, char* imgBuf, \
     int img_sN = iC * iH * iW;
     int img_sB = iN * iC * iH * iW;
     
-    size_t outputpixels = iB * iN * iC * iH * iW;
+    size_t outputpixels = static_cast<size_t>(iB) * iN * iC * iH * iW;
     int * pixelCounter = new int[outputpixels]();
 
     float * img_ptr =(float *)imgBuf;
