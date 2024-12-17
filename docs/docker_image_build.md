@@ -38,6 +38,7 @@ sudo docker run -itd --name ffmpeg_ivsr_sdk_container --privileged \
   -e https_proxy=$https_proxy \
   -e no_proxy=$no_proxy \
   --shm-size=128g \
+  --device=/dev/dri:/dev/dri \
   ffmpeg_ivsr_sdk_<os_version>_<ov_version>:latest bash
 
 # Open another shell terminal to interact with the running container

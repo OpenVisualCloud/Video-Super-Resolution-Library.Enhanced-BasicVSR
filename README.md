@@ -187,7 +187,7 @@ The `vsr_sample` is developed using the iVSR SDK and OpenCV. For detailed instru
 After applying the FFmpeg plugin patches and building FFmpeg, refer to [the FFmpeg command line samples](ivsr_ffmpeg_plugin/README.md#how-to-run-inference-with-ffmpeg-plugin) for instructions on running inference with FFmpeg.
 
 # 4. Model files
-iVSR supports only models in OpenVINO IR format. Contact your Intel representative to obtain the model files, as they are not included in the package.
+iVSR supports only models in OpenVINO IR format. Contact your Intel representative to obtain the model files, as they are not included in the repo.
 
 # 5. License
 iVSR is licensed under the BSD 3-clause license. See [LICENSE](LICENSE.md) for details.

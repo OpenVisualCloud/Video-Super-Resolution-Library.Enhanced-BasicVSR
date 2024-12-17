@@ -46,7 +46,6 @@ install_openvino_from_source() {
     git config --global --add safe.directory ${ivsr_ov_dir}
   fi
   cd ${ivsr_ov_dir}
-  #git checkout ${OV_BRANCH}
   git submodule update --init --recursive
 
   ## applying ov22.3 patches to enable Enhanced BasicVSR model
