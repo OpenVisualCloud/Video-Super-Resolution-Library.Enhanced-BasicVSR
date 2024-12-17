@@ -14,6 +14,9 @@ name: "CodeQL Advanced"
 on:
   push:
     branches: [ "master" ]
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.txt'
   pull_request:
     branches: [ "master" ]
     paths-ignore:
@@ -100,3 +103,10 @@ jobs:
       uses: github/codeql-action/analyze@b611370bb5703a7efb587f9d136a52ea24c5c38c # v3.25.11
       with:
         category: "/language:${{matrix.language}}"
+
+    - name: filter-sarif
+      uses: advanced-security/filter-sarif@v1
+      with:
+        paths-ignore: |
+          '**/ffmpeg*'
+          '**/openvino*'
