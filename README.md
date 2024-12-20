@@ -63,7 +63,7 @@ In order to support the widely-used media processing solution FFmpeg, we've prov
 This plugin is integrated into FFmpeg's `dnn_processing` filter in the [FFmpeg documentation](https://ffmpeg.org/ffmpeg-filters.html#dnn_005fprocessing-1) in the libavfilter library, serving as a new `ivsr` backend to this filter. Please note that the patches provided in this project are specifically for FFmpeg n6.1.<br>
 
 ### 1.3.3 OpenVINO patches and extension
-In [this folder](./ivsr_ov/based_on_openvino_2022.3/patches), you'll find patches for OpenVINO that enable the Enhanced BasicVSR model. These patches utilize OpenVINO's [Custom OpenVINO™ Operations](https://docs.openvino.ai/latest/openvino_docs_Extensibility_UG_add_openvino_ops.html) feature, which allows users to support models with custom operations not inherently supported by OpenVINO.<br>
+In [this folder](./ivsr_ov/based_on_openvino_2022.3/patches), you'll find patches for OpenVINO that enable the Enhanced BasicVSR model. These patches utilize OpenVINO's [Custom OpenVINO™ Operations](https://docs.openvino.ai/2024/documentation/openvino-extensibility/custom-openvino-operations.html) feature, which allows users to support models with custom operations not inherently supported by OpenVINO.<br>
 These patches are specifically for OpenVINO 2022.3, meaning the Enhanced BasicVSR model will only work on OpenVINO 2022.3 with these patches applied.<br>
 
 ## 1.4 Capabilities of iVSR
